@@ -5,11 +5,14 @@ Melodyne 型のノート単位ボーカル編集プラグイン。ARA2 対応 VS
 
 ## 現状
 
-- フェーズ0（ARA パススルー）とフェーズ1（MVP: F-01〜F-08）の実装が完了。Cakewalk Sonar での実機確認は未実施（ユーザーが行う。手順は [docs/dev-setup.md](docs/dev-setup.md)）。
-- 検証済み: Catch2 単体テスト、pluginval（strictness 5）、ARA SDK の ARA Test Host（9 シナリオ）。
-- 設計は [docs/design.md](docs/design.md)（スレッド構成、データの流れ、各層の方式、既知の制約）。
-- 要件定義書との差分: F0 推定は FCPE ではなく YIN ベースの pYIN 風（モデル不要）。FCPE（ONNX）はフェーズ2 で決める。
-- 次フェーズ（フェーズ2: F-09〜F-18）で決める事項は、フェーズ1 完了時の報告と docs/design.md の「既知の制約」を参照。
+- フェーズ0（ARA パススルー）、フェーズ1（MVP: F-01〜F-08）、フェーズ2（F-09〜F-18）の実装が完了。
+  フェーズ0・1 は Cakewalk Sonar でユーザーが確認済み。**フェーズ2 の Sonar 実機確認は未実施**（手順・確認項目は [docs/dev-setup.md](docs/dev-setup.md) の 4.4）。
+- 検証済み: Catch2 単体テスト（約 165 件）、RenderEngine の結合テスト（JUCE コンソールアプリ）、pluginval（strictness 5）、ARA Test Host（9 シナリオ）、
+  実モデル（PC-NSF-HiFiGAN）でのニューラル合成。合成歌声での精度: RPA 98.3%、オクターブ誤り 0%、COnP F 値 0.99。
+- 設計は [docs/design.md](docs/design.md)、ニューラル加工のセットアップは [docs/neural-setup.md](docs/neural-setup.md)。
+- 要件定義書との差分: F0 推定は FCPE ではなく YIN ベースの pYIN 風（モデル不要。合成歌声で目標精度を満たす）。FCPE（ONNX）は実音声での評価結果を見て判断する。
+- 未評価: 実音声（本人の歌声・ボカロ）での精度。`koenote_analyze` と `tools/eval`（mir_eval）で評価できる（評価データが必要）。
+- 次のステップ: Sonar でのフェーズ2 の確認、実音声での精度評価、フェーズ3（F-19〜F-21、macOS、他 DAW の検証）。
 
 ## 技術スタック
 
@@ -24,14 +27,19 @@ Melodyne 型のノート単位ボーカル編集プラグイン。ARA2 対応 VS
 
 | パス | 内容 |
 |---|---|
-| `src/model/` | 編集モデル（EditModel: ノート・Undo/Redo・バージョン付きシリアライズ）。JUCE 非依存 |
-| `src/analysis/` | 解析層（IPitchAnalyzer / INoteSegmenter、YinPitchAnalyzer、RuleBasedNoteSegmenter）。JUCE 非依存 |
-| `src/render/` | レンダリング層（TD-PSOLA、TimeMap、ピッチ曲線編集、ProcessingGate、パススルー）。JUCE 非依存 |
-| `src/plugin/` | AudioProcessor、ARA の DocumentController / AudioSource / AudioModification / PlaybackRenderer |
-| `src/ui/` | ピアノロール、パラメータパネル、Editor、日英の文字列。`EditTarget` 越しにモデルへ触れる |
-| `tests/` | Catch2 単体テスト（`koenote_core` に対して実行） |
+| `src/model/` | 編集モデル（EditModel: ノート・MIDI 目標・Undo/Redo・バージョン付きシリアライズ。v1 は移行して読む）、テンポマップ、一括補正、MIDI の変換、スケール。JUCE 非依存 |
+| `src/analysis/` | 解析層（YinPitchAnalyzer、RuleBasedNoteSegmenter、DTW 整列、キー検出、MIDI との対応付け）。JUCE 非依存 |
+| `src/render/` | レンダリング層（TD-PSOLA、フォルマント、ゲイン、TimeMap、ピッチ曲線編集、ProcessingGate、パススルー）。JUCE 非依存 |
+| `src/midi/` | SMF の読み書き。JUCE 非依存 |
+| `src/dsp/` | FFT、リサンプル。JUCE 非依存 |
+| `src/neural/` | ニューラル加工（メル、ONNX Runtime の動的ロード、NSF-HiFiGAN 系ボコーダー）。JUCE 非依存 |
+| `src/plugin/` | AudioProcessor、ARA の DocumentController / AudioSource / AudioModification / PlaybackRenderer、RenderEngine（worker thread と結果の公開。ARA 非依存）、NeuralService |
+| `src/ui/` | ピアノロール、サイドパネル（ノート / 一括補正 / MIDI / その他）、Editor、日英の文字列。`EditTarget` 越しにモデルへ触れる |
+| `tests/` | Catch2 単体テスト（`koenote_core` に対して実行）。`tests/engine/` は RenderEngine の結合テスト（JUCE コンソールアプリ） |
 | `tools/eval/` | mir_eval による精度評価（Python） |
 | `tools/ui_preview/` | ARA ホストなしで UI を PNG 出力。`--perf` で解析・レンダリングの性能計測 |
+| `tools/analyze/` | `koenote_analyze`: 音声 → ピッチ/ノートの CSV、MIDI → 正解ノートの CSV（mir_eval 用） |
+| `third_party/onnxruntime/` | ONNX Runtime の C API ヘッダ（MIT）。DLL と重みは同梱しない |
 | `docs/` | 要件定義書、設計メモ、開発・動作確認の手順 |
 
 ## 実装上の制約
@@ -42,7 +50,8 @@ Melodyne 型のノート単位ボーカル編集プラグイン。ARA2 対応 VS
 - 非破壊編集。元音声は変更せず、編集内容のみを ARA のアーカイブへ保存する。
 - コードコメントは日本語。ライブラリ名・技術用語はカタカナにせず英字のまま書く。
 - ライセンスは AGPLv3。`LICENSE`、`THIRD_PARTY_NOTICES.md` を維持する。依存ライブラリを追加したら notices も更新する。
-- 学習済みモデルの重みはリポジトリに含めない（`.gitignore`）。非商用条件付きの重みは同梱しない。
+- 学習済みモデルの重み・`onnxruntime.dll` はリポジトリ・配布物に含めない（`.gitignore`）。ニューラル加工は利用者が配置したものを読み込む（非商用条件付きの重みがあるため）。
+- 保存形式（`kEditModelFormatVersion`）を変えるときは、旧バージョンの読み込みを残し、旧バージョンの固定バイト列のテストを足す（v1 のテストが目安）。
 - 新しいライブラリ・モデルは採用前にライセンスを確認する（GPL 系は AGPLv3 と整合する場合のみ）。
 - `KOENOTE_WEBSITE`（ARA の informationURL。空は不可）は仮の値。公開時に実際の URL へ変更する。
 
@@ -60,7 +69,8 @@ ctest --test-dir build -C Release --output-on-failure
 - ARA Test Host の手順は docs/dev-setup.md の 6 章、UI のプレビューは 7 章。
 - Git Bash では `cmake --build ... -- /m` のようなスラッシュ引数がパス変換されるため、`--parallel` を使うか `MSYS_NO_PATHCONV=1` を付ける。
 - テスト名が日本語のため、ctest は `catch_discover_tests` ではなく全体を 1 つの test として実行する。
-- Bash ツールで長い heredoc や `node -e` を書くと構文エラー・停止になることがあった。ファイルの作成・編集は Write / Edit ツールを使う。
+- Bash ツールで長い heredoc や `node -e` を書くと、バッククォートや `\\n` の扱いで構文エラー・停止・文字列への改行の混入が起きることがあった。ファイルの作成・編集は Write / Edit ツールを使う（複雑な置換は、スクリプトを Write してから `node` で実行する）。
+- テスト名のフィルタ（日本語）はコマンドライン経由では効かない。全件を実行して出力を確認する。
 
 ## 作業の進め方
 

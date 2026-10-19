@@ -890,7 +890,7 @@ void ToolsPanel::refresh()
     switch (neural.state)
     {
         case plugin::NeuralInfo::State::Unavailable: neuralStatus.setText(s.neuralUnavailable + neural.message, juce::dontSendNotification); break;
-        case plugin::NeuralInfo::State::Idle: neuralStatus.setText(enabled ? s.neuralRendering : juce::String(), juce::dontSendNotification); break;
+        case plugin::NeuralInfo::State::Idle: neuralStatus.setText(enabled ? s.neuralWaiting : juce::String(), juce::dontSendNotification); break;
         case plugin::NeuralInfo::State::Rendering:
             neuralStatus.setText(s.neuralRendering + " " + juce::String(juce::roundToInt(neural.progress * 100.0f)) + "%", juce::dontSendNotification);
             break;

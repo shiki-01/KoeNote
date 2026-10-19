@@ -3,6 +3,13 @@
 mir_eval でピッチ推定（RPA・オクターブ誤り）とノート分割（COnP F 値）を評価します。
 目標値は要件定義書 4章を参照してください。
 
+評価の入力 CSV は、リポジトリの `koenote_analyze`（`tools/analyze`）で作れます。
+
+```bash
+koenote_analyze analyze vocal.wav out/                 # out/vocal_pitch.csv, out/vocal_notes.csv
+koenote_analyze midi vocal_ref.mid out/ref_notes.csv    # 正解ノートの CSV
+```
+
 ```bash
 pip install -r requirements.txt
 python evaluate.py --ref-pitch data/ref_pitch.csv --est-pitch out/est_pitch.csv

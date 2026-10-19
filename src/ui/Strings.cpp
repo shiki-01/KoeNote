@@ -106,6 +106,7 @@ Strings makeJapanese()
     s.neuralReady = ja("反映済み");
     s.neuralFailed = ja("失敗: ");
     s.neuralFolderHint = ja("ボコーダーのモデルと onnxruntime.dll を、次のフォルダへ配置します: ");
+    s.neuralWaiting = ja("待機中（編集があると合成します）");
 
     s.statusWaiting = ja("音声の取得を待っています…");
     s.statusAnalyzing = ja("解析中…");
@@ -227,6 +228,7 @@ Strings makeEnglish()
     s.neuralReady = "Applied";
     s.neuralFailed = "Failed: ";
     s.neuralFolderHint = "Place the vocoder model and onnxruntime.dll in: ";
+    s.neuralWaiting = "Waiting (renders when there are edits)";
 
     s.statusWaiting = "Waiting for audio from the host...";
     s.statusAnalyzing = "Analyzing...";
