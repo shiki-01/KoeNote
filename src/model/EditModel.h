@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace koenote::model
@@ -67,6 +68,26 @@ public:
     std::uint64_t revision() const noexcept { return revisionCounter; }
 
     //==========================================================================
+    // 複数ノートの一括編集（F-16）。1 回の Undo で戻る。タイミングは、隣のノートと重ならない・
+    // 最短長を満たすように前から順に調整される（後ろのノートが押し出されることがある）。
+    bool applyEdits(const std::vector<std::pair<NoteId, NoteEdit>>& edits);
+
+    //==========================================================================
+    // MIDI の目標ノート（F-12）。assignments は (ノート id, 目標の添字)。
+    const std::vector<TargetNote>& targets() const noexcept { return targetList; }
+    // 割り当てられた目標の添字。未割り当てなら -1。
+    int assignmentOf(NoteId id) const noexcept;
+    bool setTargets(std::vector<TargetNote> newTargets, std::vector<std::pair<NoteId, int>> newAssignments);
+    // 目標への割り当てを 1 件変更する（targetIndex = -1 で解除）。同じ目標が他のノートに割り当てられていれば、そちらは解除する。
+    bool assignTarget(NoteId id, int targetIndex);
+    bool clearTargets();
+
+    //==========================================================================
+    // 設定（Undo の対象外。保存される）。変更すると revision が増える。
+    const ModelSettings& settings() const noexcept { return modelSettings; }
+    void setSettings(const ModelSettings& s);
+
+    //==========================================================================
     // 保存・復元（バージョン付きバイナリ形式。kEditModelFormatVersion を参照）
     std::vector<std::uint8_t> serialize() const;
     // 不正なデータ、または未対応の新しいバージョンの場合は nullopt
@@ -77,9 +98,11 @@ private:
     {
         std::vector<Note> notes;
         NoteId nextId = 1;
+        std::vector<TargetNote> targets;
+        std::vector<std::pair<NoteId, int>> assignments;
     };
 
-    Snapshot makeSnapshot() const { return { noteList, nextNoteId }; }
+    Snapshot makeSnapshot() const { return { noteList, nextNoteId, targetList, assignmentList }; }
     void restore(const Snapshot& s);
     static bool isValid(const std::vector<Note>& notes) noexcept;
 
@@ -92,6 +115,9 @@ private:
     PitchTrack track;
     std::vector<Note> noteList;
     NoteId nextNoteId = 1;
+    std::vector<TargetNote> targetList;
+    std::vector<std::pair<NoteId, int>> assignmentList;
+    ModelSettings modelSettings;
     std::uint64_t revisionCounter = 0;
 
     std::vector<Snapshot> undoStack;

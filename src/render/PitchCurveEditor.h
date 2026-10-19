@@ -19,4 +19,11 @@ namespace koenote::render
 // とする。補正量 = pitchOffsetCents + (新しい偏差 - dev)。
 // 既定値（無編集）では補正量は 0 になる。隣接するノートの境界は transitionSmoothness に応じて滑らかにつなぐ。
 std::vector<float> computePitchAdjustCents(const model::PitchTrack& track, const std::vector<model::Note>& notes);
+
+// フレームごとのフォルマントのシフト量（セント。F-09）。ノート内では
+//   formantShiftCents + formantFollow * pitchAdjustCents[frame]
+// ノート外は 0。pitchAdjust は computePitchAdjustCents の結果（同じ長さ）。
+std::vector<float> computeFormantShiftCents(const model::PitchTrack& track,
+                                            const std::vector<model::Note>& notes,
+                                            const std::vector<float>& pitchAdjustCents);
 } // namespace koenote::render

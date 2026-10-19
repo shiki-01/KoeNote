@@ -134,4 +134,35 @@ std::vector<float> computePitchAdjustCents(const model::PitchTrack& track, const
 
     return adjust;
 }
+
+std::vector<float> computeFormantShiftCents(const model::PitchTrack& track,
+                                            const std::vector<model::Note>& notes,
+                                            const std::vector<float>& pitchAdjustCents)
+{
+    std::vector<float> shift(track.size(), 0.0f);
+
+    if (track.empty())
+        return shift;
+
+    const double hop = track.hopSec;
+
+    for (const auto& note : notes)
+    {
+        if (note.edit.formantShiftCents == 0.0f && note.edit.formantFollow == 0.0f)
+            continue;
+
+        const auto first = std::max<long long>(0, static_cast<long long>(std::ceil((note.startSec - track.startSec) / hop - 1.0e-9)));
+        const auto last = std::min<long long>(static_cast<long long>(track.size()) - 1,
+                                              static_cast<long long>(std::ceil((note.endSec - track.startSec) / hop - 1.0e-9)) - 1);
+
+        for (long long f = first; f <= last; ++f)
+        {
+            const auto i = static_cast<std::size_t>(f);
+            const float pitch = i < pitchAdjustCents.size() ? pitchAdjustCents[i] : 0.0f;
+            shift[i] = note.edit.formantShiftCents + note.edit.formantFollow * pitch;
+        }
+    }
+
+    return shift;
+}
 } // namespace koenote::render

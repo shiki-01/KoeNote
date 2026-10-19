@@ -18,7 +18,9 @@ bool sameEdit(const NoteEdit& a, const NoteEdit& b) noexcept
     return a.pitchOffsetCents == b.pitchOffsetCents && a.centerCorrection == b.centerCorrection
            && a.vibratoScale == b.vibratoScale && a.driftScale == b.driftScale
            && a.transitionSmoothness == b.transitionSmoothness && a.targetStartSec == b.targetStartSec
-           && a.targetEndSec == b.targetEndSec;
+           && a.targetEndSec == b.targetEndSec && a.gainDb == b.gainDb && a.formantShiftCents == b.formantShiftCents
+           && a.formantFollow == b.formantFollow && a.consonantGainDb == b.consonantGainDb
+           && a.breathGainDb == b.breathGainDb;
 }
 
 void writeNote(ByteWriter& w, const Note& n)
@@ -35,12 +37,19 @@ void writeNote(ByteWriter& w, const Note& n)
     w.writeF32(n.edit.transitionSmoothness);
     w.writeF64(n.edit.targetStartSec);
     w.writeF64(n.edit.targetEndSec);
+    // v2 で追加
+    w.writeF32(n.edit.gainDb);
+    w.writeF32(n.edit.formantShiftCents);
+    w.writeF32(n.edit.formantFollow);
+    w.writeF32(n.edit.consonantGainDb);
+    w.writeF32(n.edit.breathGainDb);
 }
 
-// 1 ノートあたりの保存サイズ（id 8 + 区間 16 + midi/level 8 + 編集 float 5 個 20 + 目標区間 16）
-constexpr std::size_t kSerialisedNoteBytes = 8 + 16 + 8 + 20 + 16;
+// 1 ノートあたりの保存サイズ（id 8 + 区間 16 + midi/level 8 + 編集 float 5 個 20 + 目標区間 16）。v2 は float 5 個が加わる。
+constexpr std::size_t kSerialisedNoteBytesV1 = 8 + 16 + 8 + 20 + 16;
+constexpr std::size_t kSerialisedNoteBytesV2 = kSerialisedNoteBytesV1 + 20;
 
-Note readNote(ByteReader& r)
+Note readNote(ByteReader& r, std::uint32_t version)
 {
     Note n;
     n.id = r.readU64();
@@ -55,6 +64,16 @@ Note readNote(ByteReader& r)
     n.edit.transitionSmoothness = r.readF32();
     n.edit.targetStartSec = r.readF64();
     n.edit.targetEndSec = r.readF64();
+
+    if (version >= 2)
+    {
+        n.edit.gainDb = r.readF32();
+        n.edit.formantShiftCents = r.readF32();
+        n.edit.formantFollow = r.readF32();
+        n.edit.consonantGainDb = r.readF32();
+        n.edit.breathGainDb = r.readF32();
+    }
+
     return n;
 }
 } // namespace
@@ -92,6 +111,9 @@ void EditModel::setAnalysis(PitchTrack newTrack, std::vector<Note> newNotes)
     for (auto& n : noteList)
         n.id = nextNoteId++;
 
+    targetList.clear();
+    assignmentList.clear();
+
     analysed = true;
     undoStack.clear();
     redoStack.clear();
@@ -109,7 +131,10 @@ bool EditModel::isValid(const std::vector<Note>& notes) noexcept
         const auto& n = notes[i];
 
         if (! finite(n.startSec) || ! finite(n.endSec) || ! finite(n.detectedMidi) || ! finite(n.edit.pitchOffsetCents)
-            || ! finite(n.edit.targetStartSec) || ! finite(n.edit.targetEndSec))
+            || ! finite(n.edit.targetStartSec) || ! finite(n.edit.targetEndSec) || ! finite(n.edit.gainDb)
+            || ! finite(n.edit.formantShiftCents) || ! finite(n.edit.formantFollow) || ! finite(n.edit.consonantGainDb)
+            || ! finite(n.edit.breathGainDb) || ! finite(n.edit.centerCorrection) || ! finite(n.edit.vibratoScale)
+            || ! finite(n.edit.driftScale) || ! finite(n.edit.transitionSmoothness))
             return false;
 
         // 目標区間は開始・終了が揃って設定されているか、揃って未設定
@@ -138,6 +163,8 @@ void EditModel::restore(const Snapshot& s)
 {
     noteList = s.notes;
     nextNoteId = s.nextId;
+    targetList = s.targets;
+    assignmentList = s.assignments;
 }
 
 void EditModel::beginEdit()
@@ -197,7 +224,15 @@ bool EditModel::mutate(Fn&& mutator)
     }
 
     // 内容が変わっていなければ履歴に積まない
-    bool changed = before.notes.size() != noteList.size() || before.nextId != nextNoteId;
+    bool changed = before.notes.size() != noteList.size() || before.nextId != nextNoteId
+                   || before.assignments != assignmentList || before.targets.size() != targetList.size();
+
+    for (std::size_t i = 0; i < targetList.size() && ! changed; ++i)
+    {
+        const auto& a = before.targets[i];
+        const auto& b = targetList[i];
+        changed = a.startSec != b.startSec || a.endSec != b.endSec || a.midi != b.midi;
+    }
 
     for (std::size_t i = 0; i < noteList.size() && ! changed; ++i)
     {
@@ -281,6 +316,10 @@ bool EditModel::splitNote(NoteId id, double atSourceSec, NoteId* rightId)
         left.endSec = atSourceSec;
         right.startSec = atSourceSec;
 
+        // 子音は前半の直前、ブレスは後半の直後にだけ付く
+        left.edit.breathGainDb = 0.0f;
+        right.edit.consonantGainDb = 0.0f;
+
         if (src.edit.hasTimingEdit())
         {
             // 出力時間軸上でも、元の区間内での位置と同じ比率で分割する
@@ -319,6 +358,7 @@ bool EditModel::mergeWithNext(NoteId id)
         m.endSec = b.endSec;
         m.detectedMidi = static_cast<float>((a.detectedMidi * da + b.detectedMidi * db) / total);
         m.level = static_cast<float>((a.level * da + b.level * db) / total);
+        m.edit.breathGainDb = b.edit.breathGainDb;
 
         // 目標ピッチは区間長で重み付けした平均に合わせる
         const double targetMidi = (a.targetMidi() * da + b.targetMidi() * db) / total;
@@ -371,6 +411,128 @@ bool EditModel::resetAll()
     });
 }
 
+bool EditModel::applyEdits(const std::vector<std::pair<NoteId, NoteEdit>>& edits)
+{
+    if (edits.empty())
+        return false;
+
+    return mutate([&]
+    {
+        for (const auto& [id, edit] : edits)
+        {
+            const auto i = indexOf(id);
+            if (i == npos)
+                return false;
+            noteList[i].edit = edit;
+        }
+
+        // タイミングを前から順に整える（重なりは、ノートの長さを保ったまま後ろへ押し出して解消する）
+        double previousEnd = -1.0e18;
+
+        for (auto& n : noteList)
+        {
+            double s = n.outStartSec();
+            double e = n.outEndSec();
+
+            if (s < previousEnd)
+            {
+                // 重なる場合は、長さを保ったまま後ろへ押し出す
+                e += previousEnd - s;
+                s = previousEnd;
+            }
+            if (e - s < kMinNoteDurationSec)
+                e = s + kMinNoteDurationSec;
+
+            if (std::abs(s - n.startSec) < kEps && std::abs(e - n.endSec) < kEps)
+            {
+                n.edit.targetStartSec = -1.0;
+                n.edit.targetEndSec = -1.0;
+            }
+            else
+            {
+                n.edit.targetStartSec = std::max(0.0, s);
+                n.edit.targetEndSec = std::max(0.0, s) + (e - s);
+            }
+
+            previousEnd = n.outEndSec();
+        }
+
+        return true;
+    });
+}
+
+int EditModel::assignmentOf(NoteId id) const noexcept
+{
+    for (const auto& a : assignmentList)
+        if (a.first == id)
+            return a.second;
+    return -1;
+}
+
+bool EditModel::setTargets(std::vector<TargetNote> newTargets, std::vector<std::pair<NoteId, int>> newAssignments)
+{
+    for (const auto& t : newTargets)
+        if (! finite(t.startSec) || ! finite(t.endSec) || ! finite(t.midi))
+            return false;
+
+    // 割り当ては、存在するノートと目標の範囲内で、目標が重複しないものだけを残す
+    std::vector<std::pair<NoteId, int>> cleaned;
+    std::vector<char> used(newTargets.size(), 0);
+
+    for (const auto& a : newAssignments)
+    {
+        if (findNote(a.first) == nullptr || a.second < 0 || static_cast<std::size_t>(a.second) >= newTargets.size()
+            || used[static_cast<std::size_t>(a.second)])
+            continue;
+
+        used[static_cast<std::size_t>(a.second)] = 1;
+        cleaned.push_back(a);
+    }
+
+    return mutate([&]
+    {
+        targetList = std::move(newTargets);
+        assignmentList = std::move(cleaned);
+        return true;
+    });
+}
+
+bool EditModel::assignTarget(NoteId id, int targetIndex)
+{
+    if (findNote(id) == nullptr || targetIndex < -1 || targetIndex >= static_cast<int>(targetList.size()))
+        return false;
+
+    return mutate([&]
+    {
+        std::erase_if(assignmentList, [&] (const auto& a) { return a.first == id || (targetIndex >= 0 && a.second == targetIndex); });
+
+        if (targetIndex >= 0)
+            assignmentList.emplace_back(id, targetIndex);
+
+        return true;
+    });
+}
+
+bool EditModel::clearTargets()
+{
+    return mutate([&]
+    {
+        targetList.clear();
+        assignmentList.clear();
+        return true;
+    });
+}
+
+void EditModel::setSettings(const ModelSettings& s)
+{
+    if (s.renderMode == modelSettings.renderMode && s.snapMode == modelSettings.snapMode && s.keyRoot == modelSettings.keyRoot
+        && s.keyMinor == modelSettings.keyMinor && s.gridDivision == modelSettings.gridDivision && s.manualBpm == modelSettings.manualBpm)
+        return;
+
+    modelSettings = s;
+    ++revisionCounter;
+}
+
 bool EditModel::undo()
 {
     if (undoStack.empty())
@@ -416,6 +578,29 @@ std::vector<std::uint8_t> EditModel::serialize() const
     for (const auto& n : noteList)
         writeNote(w, n);
 
+    // v2: MIDI の目標ノート、割り当て、設定
+    w.writeU64(targetList.size());
+    for (const auto& t : targetList)
+    {
+        w.writeF64(t.startSec);
+        w.writeF64(t.endSec);
+        w.writeF32(t.midi);
+    }
+
+    w.writeU64(assignmentList.size());
+    for (const auto& a : assignmentList)
+    {
+        w.writeU64(a.first);
+        w.writeU32(static_cast<std::uint32_t>(a.second));
+    }
+
+    w.writeU8(modelSettings.renderMode);
+    w.writeU8(modelSettings.snapMode);
+    w.writeU8(modelSettings.keyRoot);
+    w.writeU8(modelSettings.keyMinor);
+    w.writeU8(modelSettings.gridDivision);
+    w.writeF32(modelSettings.manualBpm);
+
     return w.release();
 }
 
@@ -451,12 +636,56 @@ std::optional<EditModel> EditModel::deserialize(const std::uint8_t* data, std::s
         v = r.readF32();
 
     const auto count = r.readU64();
-    if (! r.plausibleCount(count, kSerialisedNoteBytes))
+    if (! r.plausibleCount(count, version >= 2 ? kSerialisedNoteBytesV2 : kSerialisedNoteBytesV1))
         return std::nullopt;
 
     m.noteList.reserve(static_cast<std::size_t>(count));
     for (std::uint64_t i = 0; i < count; ++i)
-        m.noteList.push_back(readNote(r));
+        m.noteList.push_back(readNote(r, version));
+
+    if (version >= 2)
+    {
+        const auto targetCount = r.readU64();
+        if (! r.plausibleCount(targetCount, 20))
+            return std::nullopt;
+
+        m.targetList.reserve(static_cast<std::size_t>(targetCount));
+        for (std::uint64_t i = 0; i < targetCount; ++i)
+        {
+            TargetNote t;
+            t.startSec = r.readF64();
+            t.endSec = r.readF64();
+            t.midi = r.readF32();
+            m.targetList.push_back(t);
+        }
+
+        const auto assignmentCount = r.readU64();
+        if (! r.plausibleCount(assignmentCount, 12))
+            return std::nullopt;
+
+        for (std::uint64_t i = 0; i < assignmentCount; ++i)
+        {
+            const auto id = r.readU64();
+            const auto index = static_cast<std::int32_t>(r.readU32());
+
+            // 範囲外の割り当ては捨てる
+            if (index >= 0 && static_cast<std::size_t>(index) < m.targetList.size())
+                m.assignmentList.emplace_back(id, index);
+        }
+
+        m.modelSettings.renderMode = r.readU8();
+        m.modelSettings.snapMode = r.readU8();
+        m.modelSettings.keyRoot = r.readU8();
+        m.modelSettings.keyMinor = r.readU8();
+        m.modelSettings.gridDivision = r.readU8();
+        m.modelSettings.manualBpm = r.readF32();
+
+        // 設定値の範囲を検査する（壊れたデータで UI が不正な状態にならないように）
+        auto& s = m.modelSettings;
+        if (s.renderMode > 1 || s.snapMode > 2 || s.keyRoot > 11 || s.keyMinor > 1 || s.gridDivision > 3 || ! std::isfinite(s.manualBpm)
+            || s.manualBpm < 0.0f || s.manualBpm > 999.0f)
+            s = ModelSettings {};
+    }
 
     if (r.failed() || ! (m.track.hopSec > 0.0) || ! isValid(m.noteList))
         return std::nullopt;

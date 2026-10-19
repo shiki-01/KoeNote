@@ -24,7 +24,50 @@ struct NoteEdit
     double targetStartSec = -1.0;
     double targetEndSec = -1.0;
 
+    // --- フェーズ2（保存形式 v2 で追加）---
+    // ノート全体のゲイン（dB。F-10）
+    float gainDb = 0.0f;
+    // フォルマントのシフト量（セント。+ で声が明るく・細くなる方向。F-09）。レンダリングは ±600 セントに制限する（TD-PSOLA では それ以上のシフトで基本周波数の聞こえ方が崩れるため）
+    float formantShiftCents = 0.0f;
+    // フォルマントをピッチ変更に追従させる割合（0 = 声質を保持、1 = ピッチと同じだけ動かす。F-09）
+    float formantFollow = 0.0f;
+    // このノートの直前の子音部（無声の立ち上がり）のゲイン（dB。F-10）
+    float consonantGainDb = 0.0f;
+    // このノートの直後から次のノートの子音部までの区間（ブレスなど）のゲイン（dB。F-10）
+    float breathGainDb = 0.0f;
+
     bool hasTimingEdit() const noexcept { return targetStartSec >= 0.0 && targetEndSec >= 0.0; }
+
+    // 既定値（音に影響する編集が何もない）か
+    bool isDefault() const noexcept
+    {
+        return pitchOffsetCents == 0.0f && centerCorrection == 0.0f && vibratoScale == 1.0f && driftScale == 1.0f
+               && ! hasTimingEdit() && gainDb == 0.0f && formantShiftCents == 0.0f && consonantGainDb == 0.0f
+               && breathGainDb == 0.0f;
+    }
+};
+
+// MIDI から取り込んだ目標ノート（F-12）。時刻は取り込み時のオフセットを適用した後の秒（編集後の時間軸）。
+struct TargetNote
+{
+    double startSec = 0.0;
+    double endSec = 0.0;
+    float midi = 60.0f;
+};
+
+// 編集モデルに保存する設定（Undo の対象外）
+struct ModelSettings
+{
+    // 0 = 標準（TD-PSOLA）、1 = ニューラル（F-17。利用できない環境では標準にフォールバック）
+    std::uint8_t renderMode = 0;
+    // スナップ設定（0 = なし、1 = 半音、2 = スケール）
+    std::uint8_t snapMode = 1;
+    std::uint8_t keyRoot = 0;   // 0 = C .. 11 = B
+    std::uint8_t keyMinor = 0;  // 0 = メジャー、1 = マイナー
+    // グリッドの分割（0 = 4 分、1 = 8 分、2 = 16 分、3 = 32 分音符）
+    std::uint8_t gridDivision = 2;
+    // ホストがテンポを提供しない場合に使う手動の BPM（0 = 使わない）
+    float manualBpm = 0.0f;
 };
 
 // 解析で得られたノート（元音声の時間軸）と、その編集内容

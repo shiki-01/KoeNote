@@ -1,3 +1,4 @@
+#include "model/ByteStream.h"
 #include "model/EditModel.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -333,24 +334,251 @@ TEST_CASE("巨大な要素数を持つ保存データでメモリを確保しな
     CHECK_FALSE(EditModel::deserialize(bytes.data(), bytes.size()).has_value());
 }
 
-// バージョン 1 の保存形式の固定。形式を変更したときはこのテストが失敗する（意図した変更なら
-// 旧形式の読み込み処理を追加したうえで、新しいバージョン用のテストを足すこと）。
-TEST_CASE("バージョン 1 の保存データ（固定バイト列）を読み込める")
+// バージョン 1 の保存データ（フェーズ1 で保存したプロジェクト）を、手で組み立てたバイト列で再現する。
+// v1 の形式は変更してはならない。新しいバージョンでも、このデータを読み込めること。
+namespace
+{
+std::vector<std::uint8_t> makeVersion1Blob()
+{
+    ByteWriter w;
+    w.writeU32(kEditModelMagic);
+    w.writeU32(1);
+    w.writeU8(1);   // analysed
+    w.writeU64(3);  // nextNoteId
+
+    w.writeF64(0.0);
+    w.writeF64(0.5);
+    w.writeU64(1);
+    w.writeF32(100.0f);
+    w.writeF32(1.0f);
+
+    w.writeU64(2);
+    for (std::uint64_t id = 1; id <= 2; ++id)
+    {
+        w.writeU64(id);
+        w.writeF64(static_cast<double>(id));        // start
+        w.writeF64(static_cast<double>(id) + 0.5);  // end
+        w.writeF32(60.0f + static_cast<float>(id));
+        w.writeF32(0.25f);
+        w.writeF32(id == 1 ? 150.0f : 0.0f); // pitchOffsetCents
+        w.writeF32(0.5f);                     // centerCorrection
+        w.writeF32(0.75f);                    // vibratoScale
+        w.writeF32(1.0f);                     // driftScale
+        w.writeF32(0.1f);                     // transitionSmoothness
+        w.writeF64(-1.0);
+        w.writeF64(-1.0);
+    }
+
+    return w.release();
+}
+} // namespace
+
+TEST_CASE("バージョン 1 の保存データを読み込み、フェーズ2 の項目は既定値になる")
+{
+    const auto bytes = makeVersion1Blob();
+    // ヘッダ 17 + トラック 32 + ノート数 8 + ノート 68 x 2
+    REQUIRE(bytes.size() == 17 + 32 + 8 + 68 * 2);
+
+    const auto restored = EditModel::deserialize(bytes.data(), bytes.size());
+    REQUIRE(restored.has_value());
+    REQUIRE(restored->notes().size() == 2);
+
+    const auto& n = restored->notes()[0];
+    CHECK(n.edit.pitchOffsetCents == 150.0f);
+    CHECK(n.edit.centerCorrection == 0.5f);
+    CHECK(n.edit.vibratoScale == 0.75f);
+    CHECK(n.edit.gainDb == 0.0f);
+    CHECK(n.edit.formantShiftCents == 0.0f);
+    CHECK(n.edit.consonantGainDb == 0.0f);
+    CHECK(restored->targets().empty());
+    CHECK(restored->settings().renderMode == 0);
+}
+
+TEST_CASE("v1 から読み込んだモデルを保存し直すと、v2 として読める")
+{
+    const auto bytes = makeVersion1Blob();
+    const auto restored = EditModel::deserialize(bytes.data(), bytes.size());
+    REQUIRE(restored.has_value());
+
+    const auto v2 = restored->serialize();
+    CHECK(v2[4] == 2);
+    const auto again = EditModel::deserialize(v2.data(), v2.size());
+    REQUIRE(again.has_value());
+    CHECK(again->notes()[0].edit.pitchOffsetCents == 150.0f);
+}
+
+TEST_CASE("v2 の保存サイズ（固定）")
 {
     EditModel m;
     PitchTrack t;
-    t.startSec = 0.0;
     t.hopSec = 0.5;
     t.f0Hz = { 100.0f };
     t.voicing = { 1.0f };
     m.setAnalysis(t, { makeNote(1.0, 2.0, 60.0f) });
+
+    // ヘッダ 17 + トラック 32 + ノート数 8 + ノート 88 + 目標数 8 + 割り当て数 8 + 設定 9
+    CHECK(m.serialize().size() == 17 + 32 + 8 + 88 + 8 + 8 + 9);
+}
+
+TEST_CASE("フェーズ2 の編集項目（ゲイン・フォルマント・子音・ブレス）は保存・復元できる")
+{
+    auto m = makeModel();
+    auto edit = m.notes()[0].edit;
+    edit.gainDb = -3.5f;
+    edit.formantShiftCents = 200.0f;
+    edit.formantFollow = 0.4f;
+    edit.consonantGainDb = -6.0f;
+    edit.breathGainDb = -12.0f;
+    REQUIRE(m.setNoteEdit(m.notes()[0].id, edit));
+
     const auto bytes = m.serialize();
-
-    // サイズ: ヘッダ 4+4+1+8 + トラック 8+8+8+4+4 + ノート数 8 + ノート 68
-    CHECK(bytes.size() == 17 + 32 + 8 + 68);
-
     const auto restored = EditModel::deserialize(bytes.data(), bytes.size());
     REQUIRE(restored.has_value());
-    CHECK(restored->notes().size() == 1);
-    CHECK(restored->pitchTrack().f0Hz.size() == 1);
+
+    const auto& e = restored->notes()[0].edit;
+    CHECK(e.gainDb == -3.5f);
+    CHECK(e.formantShiftCents == 200.0f);
+    CHECK(e.formantFollow == 0.4f);
+    CHECK(e.consonantGainDb == -6.0f);
+    CHECK(e.breathGainDb == -12.0f);
+    CHECK_FALSE(e.isDefault());
+}
+
+TEST_CASE("目標ノートと割り当て、設定は保存・復元できる")
+{
+    auto m = makeModel();
+    const auto a = m.notes()[0].id;
+    const auto b = m.notes()[1].id;
+
+    REQUIRE(m.setTargets({ { 1.0, 2.0, 62.0f }, { 2.5, 3.5, 65.0f } }, { { a, 0 }, { b, 1 } }));
+    CHECK(m.assignmentOf(a) == 0);
+    CHECK(m.assignmentOf(b) == 1);
+
+    ModelSettings s;
+    s.renderMode = 1;
+    s.snapMode = 2;
+    s.keyRoot = 7;
+    s.keyMinor = 1;
+    s.gridDivision = 3;
+    s.manualBpm = 133.5f;
+    m.setSettings(s);
+
+    const auto bytes = m.serialize();
+    const auto restored = EditModel::deserialize(bytes.data(), bytes.size());
+    REQUIRE(restored.has_value());
+    REQUIRE(restored->targets().size() == 2);
+    CHECK(restored->targets()[1].midi == 65.0f);
+    CHECK(restored->assignmentOf(b) == 1);
+    CHECK(restored->settings().renderMode == 1);
+    CHECK(restored->settings().keyRoot == 7);
+    CHECK(restored->settings().keyMinor == 1);
+    CHECK(restored->settings().gridDivision == 3);
+    CHECK(restored->settings().manualBpm == 133.5f);
+}
+
+TEST_CASE("範囲外の設定値を持つ保存データは既定の設定に戻される")
+{
+    auto m = makeModel();
+    auto bytes = m.serialize();
+    // 設定の先頭（renderMode）は末尾から 9 バイト目
+    bytes[bytes.size() - 9] = 7;
+    const auto restored = EditModel::deserialize(bytes.data(), bytes.size());
+    REQUIRE(restored.has_value());
+    CHECK(restored->settings().renderMode == 0);
+    CHECK(restored->settings().snapMode == 1);
+}
+
+TEST_CASE("目標の割り当ては入れ替え・解除でき、Undo で戻る")
+{
+    auto m = makeModel();
+    const auto a = m.notes()[0].id;
+    const auto b = m.notes()[1].id;
+    REQUIRE(m.setTargets({ { 1.0, 2.0, 62.0f }, { 2.5, 3.5, 65.0f } }, { { a, 0 } }));
+
+    REQUIRE(m.assignTarget(b, 0)); // 目標 0 は b へ移る（a は解除される）
+    CHECK(m.assignmentOf(a) == -1);
+    CHECK(m.assignmentOf(b) == 0);
+
+    REQUIRE(m.assignTarget(b, -1));
+    CHECK(m.assignmentOf(b) == -1);
+
+    CHECK_FALSE(m.assignTarget(b, 5));  // 範囲外
+    CHECK_FALSE(m.assignTarget(9999, 0)); // 存在しないノート
+
+    REQUIRE(m.undo());
+    CHECK(m.assignmentOf(b) == 0);
+}
+
+TEST_CASE("setTargets は不正な割り当て（範囲外・重複・存在しないノート）を捨てる")
+{
+    auto m = makeModel();
+    const auto a = m.notes()[0].id;
+    const auto b = m.notes()[1].id;
+
+    REQUIRE(m.setTargets({ { 1.0, 2.0, 62.0f } }, { { a, 0 }, { b, 0 }, { 9999, 0 }, { b, 3 } }));
+    CHECK(m.assignmentOf(a) == 0);
+    CHECK(m.assignmentOf(b) == -1);
+}
+
+TEST_CASE("applyEdits は複数ノートを 1 回の Undo で変更し、重なるタイミングを押し出す")
+{
+    auto m = makeModel(); // 1.0-2.0, 2.5-3.5, 3.5-4.0
+    const auto a = m.notes()[0].id;
+    const auto b = m.notes()[1].id;
+
+    auto ea = m.notes()[0].edit;
+    ea.targetStartSec = 1.0;
+    ea.targetEndSec = 3.0; // 次のノート（2.5 開始）に食い込む
+    auto eb = m.notes()[1].edit;
+    eb.pitchOffsetCents = 100.0f;
+
+    REQUIRE(m.applyEdits({ { a, ea }, { b, eb } }));
+
+    // b は a の終端（3.0）まで押し出される。長さは保たれ、後ろの 3 つ目も押し出される。
+    CHECK(m.notes()[0].outEndSec() == 3.0);
+    CHECK(m.notes()[1].outStartSec() == 3.0);
+    CHECK(m.notes()[1].outEndSec() == 4.0);
+    CHECK(m.notes()[2].outStartSec() >= 4.0);
+    CHECK(m.notes()[1].edit.pitchOffsetCents == 100.0f);
+
+    REQUIRE(m.undo());
+    CHECK(m.notes()[0].outEndSec() == 2.0);
+    CHECK(m.notes()[1].edit.pitchOffsetCents == 0.0f);
+    CHECK_FALSE(m.canUndo());
+}
+
+TEST_CASE("設定の変更は revision を進め、Undo の対象にならない")
+{
+    auto m = makeModel();
+    const auto r = m.revision();
+    ModelSettings s = m.settings();
+    s.renderMode = 1;
+    m.setSettings(s);
+    CHECK(m.revision() > r);
+    CHECK_FALSE(m.canUndo());
+
+    const auto r2 = m.revision();
+    m.setSettings(s); // 同じ値
+    CHECK(m.revision() == r2);
+}
+
+TEST_CASE("分割・結合では子音とブレスのゲインが正しい側に残る")
+{
+    auto m = makeModel();
+    const auto id = m.notes()[0].id;
+    auto e = m.notes()[0].edit;
+    e.consonantGainDb = -4.0f;
+    e.breathGainDb = -8.0f;
+    m.setNoteEdit(id, e);
+
+    NoteId right = 0;
+    REQUIRE(m.splitNote(id, 1.5, &right));
+    CHECK(m.findNote(id)->edit.consonantGainDb == -4.0f);
+    CHECK(m.findNote(id)->edit.breathGainDb == 0.0f);
+    CHECK(m.findNote(right)->edit.consonantGainDb == 0.0f);
+    CHECK(m.findNote(right)->edit.breathGainDb == -8.0f);
+
+    REQUIRE(m.mergeWithNext(id));
+    CHECK(m.findNote(id)->edit.consonantGainDb == -4.0f);
+    CHECK(m.findNote(id)->edit.breathGainDb == -8.0f);
 }

@@ -1,5 +1,6 @@
 #include "render/PsolaRenderer.h"
 
+#include "render/GainEnvelope.h"
 #include "render/PitchCurveEditor.h"
 #include "render/PitchMarks.h"
 #include "render/TimeMap.h"
@@ -13,10 +14,17 @@ namespace
 {
 constexpr double kPi = 3.14159265358979323846;
 
-bool isDefault(const model::NoteEdit& e) noexcept
+// 線形補間で src の位置 position（小数）を読む。範囲外は 0。
+float readInterpolated(const float* in, std::int64_t numFrames, double position) noexcept
 {
-    return e.pitchOffsetCents == 0.0f && e.centerCorrection == 0.0f && e.vibratoScale == 1.0f && e.driftScale == 1.0f
-           && ! e.hasTimingEdit();
+    const auto i = static_cast<std::int64_t>(std::floor(position));
+
+    if (i < 0 || i >= numFrames)
+        return 0.0f;
+
+    const float a = in[i];
+    const float b = i + 1 < numFrames ? in[i + 1] : 0.0f;
+    return a + (b - a) * static_cast<float>(position - static_cast<double>(i));
 }
 
 float adjustAt(const model::PitchTrack& track, const std::vector<float>& adjust, double srcSec) noexcept
@@ -35,7 +43,7 @@ float adjustAt(const model::PitchTrack& track, const std::vector<float>& adjust,
 
 bool hasAudibleEdits(const std::vector<model::Note>& notes) noexcept
 {
-    return std::any_of(notes.begin(), notes.end(), [] (const model::Note& n) { return ! isDefault(n.edit); });
+    return std::any_of(notes.begin(), notes.end(), [] (const model::Note& n) { return ! n.edit.isDefault(); });
 }
 
 RenderedAudio renderEditedAudio(const RenderInput& input, const RenderProgress& progress)
@@ -79,6 +87,7 @@ RenderedAudio renderEditedAudio(const RenderInput& input, const RenderProgress& 
 
     const auto timeMap = TimeMap::fromNotes(notes);
     const auto adjust = computePitchAdjustCents(track, notes);
+    const auto formant = computeFormantShiftCents(track, notes, adjust);
 
     const double srcDurationSec = static_cast<double>(numSrc) / sr;
     const double outDurationSec = std::max(timeMap.toOutput(srcDurationSec), 0.0);
@@ -88,6 +97,8 @@ RenderedAudio renderEditedAudio(const RenderInput& input, const RenderProgress& 
     result.numChannels = input.numChannels;
     result.sampleRate = sr;
     result.channels.assign(static_cast<std::size_t>(input.numChannels), std::vector<float>(numOut, 0.0f));
+
+    const GainEnvelope gains(notes, outDurationSec);
 
     const auto maxHalf = static_cast<std::int64_t>(0.03 * sr);
 
@@ -145,10 +156,33 @@ RenderedAudio renderEditedAudio(const RenderInput& input, const RenderProgress& 
         if (mark.voiced)
             ratio = std::clamp(std::pow(2.0, static_cast<double>(adjustAt(track, adjust, srcPos / sr)) / 1200.0), 0.25, 4.0);
 
+        // フォルマントのシフト（grain を時間軸方向に伸縮して読む。1 = 変更なし）。有声のマークだけ。
+        double formantScale = 1.0;
+        if (mark.voiced)
+            formantScale = std::clamp(std::pow(2.0, static_cast<double>(adjustAt(track, formant, srcPos / sr)) / 1200.0), 0.7071, 1.4142);
+
         // 出力側の周期（サンプル）。ratio = 1 のとき元の周期と等しい。
         const double periodOut = static_cast<double>(periodFwd) / ratio;
-        // 窓の重みの和を 1 に保つ補正。ピッチを上げると窓が密に重なるため小さくする（identity では 1）。
-        const double gain = periodOut / static_cast<double>(periodFwd);
+        // grain（窓）の左右の長さ。ピッチもフォルマントも変えない区間では、元のマーク間隔のまま（窓の重みの和が
+        // 1 になり、元音声と一致する）。変える区間では、フォルマントのシフトで grain の長さが 1/formantScale 倍になる
+        // ことと、出力の周期より短いと窓が途切れて脈動することを考慮して、出力の周期以上にそろえる。
+        std::int64_t halfBack = periodBack;
+        std::int64_t halfFwd = periodFwd;
+        const bool modified = ratio != 1.0 || formantScale != 1.0;
+
+        if (modified)
+        {
+            const auto outPeriod = static_cast<std::int64_t>(std::llround(periodOut));
+            halfBack = std::max(static_cast<std::int64_t>(std::llround(static_cast<double>(periodBack) / formantScale)), outPeriod);
+            halfFwd = std::max(static_cast<std::int64_t>(std::llround(static_cast<double>(periodFwd) / formantScale)), outPeriod);
+            halfBack = std::clamp<std::int64_t>(halfBack, 1, 2 * maxHalf);
+            halfFwd = std::clamp<std::int64_t>(halfFwd, 1, 2 * maxHalf);
+        }
+
+        // 窓の重みの和を 1 に保つ補正（窓の面積 = 左右の長さの平均）。identity では 1。
+        // ノートごとのゲイン編集（F-10）も同じ係数に掛ける。
+        const double windowArea = modified ? 0.5 * static_cast<double>(halfBack + halfFwd) : static_cast<double>(periodFwd);
+        const double gain = periodOut / windowArea * static_cast<double>(gains.gainAt(t));
 
         const auto outCentre = static_cast<std::int64_t>(std::llround(t * sr));
 
@@ -158,17 +192,32 @@ RenderedAudio renderEditedAudio(const RenderInput& input, const RenderProgress& 
             auto& out = result.channels[static_cast<std::size_t>(c)];
 
             // 左半分（マークの手前 periodBack サンプル）と右半分（periodFwd サンプル）の Hann 窓
-            for (std::int64_t k = -periodBack; k < periodFwd; ++k)
+            for (std::int64_t k = -halfBack; k < halfFwd; ++k)
             {
-                const auto src = mark.position + k;
                 const auto dst = outCentre + k;
 
-                if (src < 0 || src >= input.numFrames || dst < 0 || dst >= static_cast<std::int64_t>(numOut))
+                if (dst < 0 || dst >= static_cast<std::int64_t>(numOut))
                     continue;
 
-                const double span = static_cast<double>(k < 0 ? periodBack : periodFwd);
+                float sample;
+
+                if (formantScale == 1.0)
+                {
+                    const auto src = mark.position + k;
+
+                    if (src < 0 || src >= input.numFrames)
+                        continue;
+
+                    sample = in[src];
+                }
+                else
+                {
+                    sample = readInterpolated(in, input.numFrames, static_cast<double>(mark.position) + static_cast<double>(k) * formantScale);
+                }
+
+                const double span = static_cast<double>(k < 0 ? halfBack : halfFwd);
                 const double w = 0.5 * (1.0 + std::cos(kPi * static_cast<double>(k) / span));
-                out[static_cast<std::size_t>(dst)] += static_cast<float>(gain * w * static_cast<double>(in[src]));
+                out[static_cast<std::size_t>(dst)] += static_cast<float>(gain * w * static_cast<double>(sample));
             }
         }
 

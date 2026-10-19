@@ -28,3 +28,4 @@ __pycache__/
 
 # ビルドログ
 *.log
+/build_*/
