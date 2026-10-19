@@ -1,6 +1,7 @@
 #include "render/PassthroughRenderer.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace koenote::render
 {
@@ -44,6 +45,58 @@ void accumulatePassthrough(const AudioView& src,
 
             for (std::int64_t i = validBegin; i < validEnd; ++i)
                 out[i] += in[srcStart + i];
+        }
+    }
+}
+void accumulateResampled(const AudioView& src,
+                         double srcStartPosition,
+                         double step,
+                         float* const* dst,
+                         int numDstChannels,
+                         int dstOffset,
+                         int numFrames) noexcept
+{
+    if (src.channels == nullptr || src.numChannels <= 0 || numFrames <= 0 || numDstChannels <= 0 || ! (step > 0.0))
+        return;
+
+    const bool downmix = numDstChannels == 1 && src.numChannels > 1;
+    const float downmixGain = 1.0f / static_cast<float>(src.numChannels);
+    const auto last = src.numFrames - 1;
+
+    for (int i = 0; i < numFrames; ++i)
+    {
+        const double position = srcStartPosition + static_cast<double>(i) * step;
+        const auto index = static_cast<std::int64_t>(std::floor(position));
+
+        if (index < 0 || index > last)
+            continue;
+
+        const auto next = std::min(index + 1, last);
+        const auto fraction = static_cast<float>(position - static_cast<double>(index));
+
+        const auto sample = [&] (int channel)
+        {
+            const float a = src.channels[channel][index];
+            const float b = src.channels[channel][next];
+            return a + (b - a) * fraction;
+        };
+
+        for (int c = 0; c < numDstChannels; ++c)
+        {
+            float value = 0.0f;
+
+            if (downmix)
+            {
+                for (int s = 0; s < src.numChannels; ++s)
+                    value += sample(s);
+                value *= downmixGain;
+            }
+            else
+            {
+                value = sample(std::min(c, src.numChannels - 1));
+            }
+
+            dst[c][dstOffset + i] += value;
         }
     }
 }

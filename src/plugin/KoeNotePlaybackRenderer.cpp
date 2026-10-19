@@ -56,27 +56,44 @@ bool KoeNotePlaybackRenderer::processBlock(juce::AudioBuffer<float>& buffer,
         auto* modification = static_cast<KoeNoteAudioModification*>(region->getAudioModification());
         const auto audio = modification->audioForPlayback();
 
-        // 読み込み未完了、またはサンプルレートが異なる場合はこのリージョンを鳴らさない
-        // （サンプルレート変換は未対応。dev-setup.md に制約として記載）
-        if (! audio.valid || std::abs(audio.sampleRate - sampleRate) > 0.5)
+        // 読み込み未完了のリージョンは鳴らさない（読み込み完了後に鳴る）
+        if (! audio.valid)
         {
             success = false;
             continue;
         }
 
-        // リージョン内の位置 → AudioModification 内の位置への変換。リージョンのタイムストレッチは未対応。
-        const auto modificationStart = region->getStartInAudioModificationSamples();
-        const auto offsetToSource = modificationStart - regionRange.getStart();
-
         const auto startInBlock = static_cast<int>(renderRange.getStart() - blockStart);
         const auto count = static_cast<int>(renderRange.getLength());
+        const int outChannels = std::min(buffer.getNumChannels(), numChannels);
 
-        render::accumulatePassthrough(audio.view,
-                                      renderRange.getStart() + offsetToSource,
-                                      buffer.getArrayOfWritePointers(),
-                                      std::min(buffer.getNumChannels(), numChannels),
-                                      startInBlock,
-                                      count);
+        if (std::abs(audio.sampleRate - sampleRate) <= 0.5)
+        {
+            // リージョン内の位置 → AudioModification 内の位置への変換。リージョンのタイムストレッチは未対応。
+            const auto offsetToSource = region->getStartInAudioModificationSamples() - regionRange.getStart();
+
+            render::accumulatePassthrough(audio.view,
+                                          renderRange.getStart() + offsetToSource,
+                                          buffer.getArrayOfWritePointers(),
+                                          outChannels,
+                                          startInBlock,
+                                          count);
+        }
+        else
+        {
+            // 元音声とプロジェクトのサンプルレートが異なる場合は、線形補間で変換する（簡易的なフォールバック）
+            const double startPosition = (region->getStartInAudioModificationTime()
+                                          + static_cast<double>(renderRange.getStart() - regionRange.getStart()) / sampleRate)
+                                         * audio.sampleRate;
+
+            render::accumulateResampled(audio.view,
+                                        startPosition,
+                                        audio.sampleRate / sampleRate,
+                                        buffer.getArrayOfWritePointers(),
+                                        outChannels,
+                                        startInBlock,
+                                        count);
+        }
     }
 
     return success;

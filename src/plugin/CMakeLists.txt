@@ -30,7 +30,13 @@ target_sources(KoeNote PRIVATE
     KoeNoteProcessor.cpp
     PluginEntry.cpp
     ../ui/KoeNoteEditor.h
-    ../ui/KoeNoteEditor.cpp)
+    ../ui/KoeNoteEditor.cpp
+    ../ui/NoteParamPanel.h
+    ../ui/NoteParamPanel.cpp
+    ../ui/PianoRollView.h
+    ../ui/PianoRollView.cpp
+    ../ui/Strings.h
+    ../ui/Strings.cpp)
 
 target_include_directories(KoeNote PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 

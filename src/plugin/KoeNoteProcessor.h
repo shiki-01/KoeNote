@@ -2,6 +2,8 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include <atomic>
+
 namespace koenote::plugin
 {
 // ARA2 対応の AudioProcessor。ARA 非対応のホストでは何もしない（キャプチャモードは F-19 で対応予定）。
@@ -38,8 +40,19 @@ public:
 
     juce::AudioProcessorARAExtension* getARAClientExtensions() override { return this; }
 
+    // Editor（message thread）から参照する
+    juce::ARAPlaybackRenderer* getARAPlaybackRendererForUI() const noexcept { return getPlaybackRenderer(); }
+    juce::ARAEditorRenderer* getARAEditorRendererForUI() const noexcept { return getEditorRenderer(); }
+
+    // オーディオスレッドが更新する再生位置（プロジェクト時間の秒）
+    double getPlayheadSeconds() const noexcept { return playheadSeconds.load(std::memory_order_relaxed); }
+    bool isPlayheadPlaying() const noexcept { return playheadPlaying.load(std::memory_order_relaxed); }
+
 private:
     static BusesProperties makeBusesProperties();
+
+    std::atomic<double> playheadSeconds { 0.0 };
+    std::atomic<bool> playheadPlaying { false };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(KoeNoteProcessor)
 };

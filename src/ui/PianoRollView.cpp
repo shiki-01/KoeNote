@@ -1,0 +1,1324 @@
+#include "ui/PianoRollView.h"
+
+#include "render/PitchCurveEditor.h"
+
+#include <algorithm>
+#include <cmath>
+
+namespace koenote::ui
+{
+namespace
+{
+constexpr int kKeyboardWidth = 56;
+constexpr int kRulerHeight = 22;
+constexpr int kWaveformHeight = 72;
+constexpr float kEdgeGrabPixels = 5.0f;
+
+const juce::Colour kBackground { 0xff1b1d22 };
+const juce::Colour kRowWhite { 0xff23262d };
+const juce::Colour kRowBlack { 0xff1e2026 };
+const juce::Colour kGridLine { 0xff2f333c };
+const juce::Colour kOctaveLine { 0xff4a505c };
+const juce::Colour kNoteFill { 0xff3d8bd9 };
+const juce::Colour kNoteSelected { 0xfff2b441 };
+const juce::Colour kNoteGhost { 0xff8a93a3 };
+const juce::Colour kCurve { 0xffe8ecf2 };
+const juce::Colour kPlayhead { 0xffff5a5f };
+const juce::Colour kText { 0xffd5dae3 };
+
+bool isBlackKey(int pitchClass) noexcept
+{
+    return pitchClass == 1 || pitchClass == 3 || pitchClass == 6 || pitchClass == 8 || pitchClass == 10;
+}
+
+int pitchClassOf(int midi) noexcept { return ((midi % 12) + 12) % 12; }
+
+double toMidi(double hz) noexcept { return 69.0 + 12.0 * std::log2(hz / 440.0); }
+} // namespace
+
+bool isInScale(int pitchClass, int root, ScaleType scale) noexcept
+{
+    static constexpr bool major[12] = { true, false, true, false, true, true, false, true, false, true, false, true };
+    static constexpr bool minor[12] = { true, false, true, true, false, true, false, true, true, false, true, false };
+    const int rel = (((pitchClass - root) % 12) + 12) % 12;
+    return scale == ScaleType::Major ? major[rel] : minor[rel];
+}
+
+float snapMidi(float midi, SnapMode mode, int root, ScaleType scale) noexcept
+{
+    if (mode == SnapMode::Off)
+        return midi;
+
+    if (mode == SnapMode::Semitone)
+        return std::round(midi);
+
+    const int centre = static_cast<int>(std::round(midi));
+    float best = static_cast<float>(centre);
+    float bestDistance = 1.0e9f;
+
+    for (int candidate = centre - 6; candidate <= centre + 6; ++candidate)
+    {
+        if (! isInScale(pitchClassOf(candidate), root, scale))
+            continue;
+
+        const float distance = std::abs(static_cast<float>(candidate) - midi);
+
+        if (distance < bestDistance)
+        {
+            bestDistance = distance;
+            best = static_cast<float>(candidate);
+        }
+    }
+
+    return best;
+}
+
+//==============================================================================
+PianoRollView::PianoRollView()
+{
+    setWantsKeyboardFocus(true);
+    setOpaque(true);
+    language = detectDefaultLanguage();
+    startTimerHz(30);
+}
+
+PianoRollView::~PianoRollView()
+{
+    stopTimer();
+    setModification(nullptr);
+}
+
+void PianoRollView::setModification(plugin::EditTarget* modification)
+{
+    if (current == modification)
+        return;
+
+    if (current != nullptr)
+        current->removeChangeListener(this);
+
+    current = modification;
+    selection.clear();
+    cacheValid = false;
+    peaksSource.reset();
+    peakMin.clear();
+    peakMax.clear();
+    drag = {};
+    editGestureOpen = false;
+
+    if (current != nullptr)
+        current->addChangeListener(this);
+
+    refreshCaches();
+    zoomToFit();
+    repaint();
+
+    if (onSelectionChanged)
+        onSelectionChanged();
+}
+
+void PianoRollView::setLanguage(Language l)
+{
+    language = l;
+    repaint();
+}
+
+void PianoRollView::setTool(Tool t)
+{
+    tool = t;
+    setMouseCursor(t == Tool::Split ? juce::MouseCursor::CrosshairCursor : juce::MouseCursor::NormalCursor);
+}
+
+void PianoRollView::setSnap(SnapMode mode, int rootPitchClass, ScaleType scale)
+{
+    snapMode = mode;
+    snapRoot = rootPitchClass;
+    snapScale = scale;
+}
+
+void PianoRollView::setPlayhead(double seconds)
+{
+    if (std::abs(seconds - playheadSec) > 1.0e-4)
+    {
+        playheadSec = seconds;
+        repaint();
+    }
+}
+
+model::EditModel* PianoRollView::model() const
+{
+    return current != nullptr ? &current->getModel() : nullptr;
+}
+
+//==============================================================================
+// 座標
+juce::Rectangle<int> PianoRollView::getKeyboardArea() const
+{
+    return { 0, kRulerHeight, kKeyboardWidth, std::max(0, getHeight() - kRulerHeight - kWaveformHeight) };
+}
+
+juce::Rectangle<int> PianoRollView::getRollArea() const
+{
+    return { kKeyboardWidth, kRulerHeight, std::max(0, getWidth() - kKeyboardWidth), std::max(0, getHeight() - kRulerHeight - kWaveformHeight) };
+}
+
+juce::Rectangle<int> PianoRollView::getRulerArea() const
+{
+    return { kKeyboardWidth, 0, std::max(0, getWidth() - kKeyboardWidth), kRulerHeight };
+}
+
+juce::Rectangle<int> PianoRollView::getWaveformArea() const
+{
+    return { kKeyboardWidth, std::max(0, getHeight() - kWaveformHeight), std::max(0, getWidth() - kKeyboardWidth), kWaveformHeight };
+}
+
+float PianoRollView::xOfSec(double sec) const
+{
+    return static_cast<float>(getRollArea().getX() + (sec - viewStartSec) * pixelsPerSec);
+}
+
+double PianoRollView::secOfX(float x) const
+{
+    return viewStartSec + (static_cast<double>(x) - getRollArea().getX()) / pixelsPerSec;
+}
+
+float PianoRollView::yOfMidi(double midi) const
+{
+    return static_cast<float>(getRollArea().getY() + (topMidi - midi) * pixelsPerSemitone);
+}
+
+double PianoRollView::midiOfY(float y) const
+{
+    return topMidi - (static_cast<double>(y) - getRollArea().getY()) / pixelsPerSemitone;
+}
+
+juce::Rectangle<float> PianoRollView::noteBounds(const model::Note& n) const
+{
+    const float x0 = xOfSec(n.outStartSec());
+    const float x1 = xOfSec(n.outEndSec());
+    const float h = static_cast<float>(pixelsPerSemitone) * 0.82f;
+    const float cy = yOfMidi(n.targetMidi());
+    return { x0, cy - h * 0.5f, std::max(2.0f, x1 - x0), h };
+}
+
+void PianoRollView::clampView()
+{
+    pixelsPerSec = std::clamp(pixelsPerSec, 8.0, 5000.0);
+    pixelsPerSemitone = std::clamp(pixelsPerSemitone, 6.0, 40.0);
+    topMidi = std::clamp(topMidi, 30.0, 127.0);
+    viewStartSec = std::max(viewStartSec, -2.0);
+}
+
+void PianoRollView::resized()
+{
+    clampView();
+}
+
+void PianoRollView::zoomToFit()
+{
+    const auto area = getRollArea();
+    if (area.getWidth() <= 0 || area.getHeight() <= 0)
+        return;
+
+    auto* m = model();
+    double first = 0.0, last = 10.0;
+    double lowMidi = 48.0, highMidi = 72.0;
+
+    if (m != nullptr && ! m->notes().empty())
+    {
+        first = m->notes().front().outStartSec();
+        last = m->notes().back().outEndSec();
+        lowMidi = 200.0;
+        highMidi = 0.0;
+
+        for (const auto& n : m->notes())
+        {
+            lowMidi = std::min<double>(lowMidi, n.targetMidi());
+            highMidi = std::max<double>(highMidi, n.targetMidi());
+        }
+    }
+    else if (current != nullptr)
+    {
+        if (auto source = current->getSourceAudio(); source != nullptr && source->sampleRate > 0.0)
+            last = static_cast<double>(source->numFrames) / source->sampleRate;
+    }
+
+    viewStartSec = std::max(0.0, first - 0.3);
+    pixelsPerSec = area.getWidth() / std::max(1.0, last - viewStartSec + 0.3);
+
+    const double rows = (highMidi - lowMidi) + 8.0;
+    pixelsPerSemitone = std::clamp(area.getHeight() / rows, 8.0, 26.0);
+    topMidi = highMidi + 4.0;
+    clampView();
+    repaint();
+}
+
+//==============================================================================
+// キャッシュ
+void PianoRollView::refreshCaches()
+{
+    auto* m = model();
+
+    if (m == nullptr || ! m->hasAnalysis())
+    {
+        cacheValid = false;
+        curve.clear();
+        timeMap = render::TimeMap {};
+        return;
+    }
+
+    if (cacheValid && cachedRevision == m->revision())
+        return;
+
+    cachedRevision = m->revision();
+    cacheValid = true;
+
+    timeMap = render::TimeMap::fromNotes(m->notes());
+
+    const auto& track = m->pitchTrack();
+    const auto adjust = render::computePitchAdjustCents(track, m->notes());
+
+    curve.clear();
+    curve.reserve(track.size());
+    bool previousVoiced = false;
+
+    for (std::size_t f = 0; f < track.size(); ++f)
+    {
+        if (! track.isVoiced(f))
+        {
+            previousVoiced = false;
+            continue;
+        }
+
+        const double outSec = timeMap.toOutput(track.timeOf(f));
+        const double midi = toMidi(track.f0Hz[f]) + static_cast<double>(adjust[f]) / 100.0;
+        curve.push_back({ outSec, midi, ! previousVoiced });
+        previousVoiced = true;
+    }
+}
+
+void PianoRollView::rebuildPeaks()
+{
+    if (current == nullptr)
+        return;
+
+    auto source = current->getSourceAudio();
+
+    if (source == peaksSource)
+        return;
+
+    peaksSource = source;
+    peakMin.clear();
+    peakMax.clear();
+
+    if (source == nullptr || source->numFrames <= 0)
+        return;
+
+    const auto blocks = static_cast<std::size_t>((source->numFrames + kPeakBlock - 1) / kPeakBlock);
+    peakMin.assign(blocks, 0.0f);
+    peakMax.assign(blocks, 0.0f);
+
+    const float gain = 1.0f / static_cast<float>(source->numChannels);
+
+    for (std::size_t b = 0; b < blocks; ++b)
+    {
+        const auto begin = static_cast<std::size_t>(b) * kPeakBlock;
+        const auto end = std::min(static_cast<std::size_t>(source->numFrames), begin + kPeakBlock);
+        float lo = 0.0f, hi = 0.0f;
+
+        for (std::size_t i = begin; i < end; ++i)
+        {
+            float v = 0.0f;
+            for (const auto& channel : source->channels)
+                v += channel[i];
+            v *= gain;
+            lo = std::min(lo, v);
+            hi = std::max(hi, v);
+        }
+
+        peakMin[b] = lo;
+        peakMax[b] = hi;
+    }
+}
+
+void PianoRollView::pruneSelection()
+{
+    auto* m = model();
+    std::set<model::NoteId> kept;
+
+    if (m != nullptr)
+        for (const auto id : selection)
+            if (m->findNote(id) != nullptr)
+                kept.insert(id);
+
+    if (kept != selection)
+        setSelection(std::move(kept));
+}
+
+void PianoRollView::setSelection(std::set<model::NoteId> ids)
+{
+    selection = std::move(ids);
+    repaint();
+
+    if (onSelectionChanged)
+        onSelectionChanged();
+}
+
+void PianoRollView::changeListenerCallback(juce::ChangeBroadcaster*)
+{
+    refreshCaches();
+    pruneSelection();
+
+    // 解析が終わった直後（最初の表示）は全体を表示する
+    if (cacheValid && peakMin.empty())
+        zoomToFit();
+
+    repaint();
+
+    if (onModelChanged)
+        onModelChanged();
+}
+
+void PianoRollView::timerCallback()
+{
+    if (pendingNotify && current != nullptr)
+    {
+        pendingNotify = false;
+        current->notifyEdited();
+    }
+}
+
+void PianoRollView::notifyModelEdited(bool immediately)
+{
+    refreshCaches();
+    repaint();
+
+    if (immediately)
+    {
+        pendingNotify = false;
+
+        if (current != nullptr)
+            current->notifyEdited();
+    }
+    else
+    {
+        pendingNotify = true;
+    }
+
+    if (onModelChanged)
+        onModelChanged();
+}
+
+//==============================================================================
+// 描画
+void PianoRollView::paint(juce::Graphics& g)
+{
+    g.fillAll(kBackground);
+
+    const auto& s = getStrings(language);
+
+    if (current == nullptr)
+    {
+        drawMessage(g, s.noClip);
+        return;
+    }
+
+    refreshCaches();
+    rebuildPeaks();
+
+    drawGrid(g, getRollArea());
+
+    if (cacheValid)
+    {
+        g.saveState();
+        g.reduceClipRegion(getRollArea());
+        drawNotes(g);
+        drawCurve(g);
+        drawPlayhead(g);
+        g.restoreState();
+    }
+
+    drawKeyboard(g);
+    drawRuler(g);
+    drawWaveform(g);
+
+    if (drag.kind == DragKind::Rubber)
+    {
+        g.setColour(kNoteSelected.withAlpha(0.18f));
+        g.fillRect(drag.rubber);
+        g.setColour(kNoteSelected.withAlpha(0.8f));
+        g.drawRect(drag.rubber, 1);
+    }
+
+    if (! cacheValid)
+    {
+        switch (current->getAnalysisState())
+        {
+            case plugin::AnalysisState::WaitingForAudio: drawMessage(g, s.statusWaiting); break;
+            case plugin::AnalysisState::Analyzing:
+                drawMessage(g, s.statusAnalyzing + " " + juce::String(juce::roundToInt(current->getAnalysisProgress() * 100.0f)) + "%");
+                break;
+            case plugin::AnalysisState::Failed: drawMessage(g, s.statusFailed); break;
+            case plugin::AnalysisState::Done: break;
+        }
+    }
+    else if (model()->notes().empty())
+    {
+        drawMessage(g, s.statusNoNotes);
+    }
+}
+
+void PianoRollView::drawMessage(juce::Graphics& g, const juce::String& text) const
+{
+    g.setColour(kText.withAlpha(0.85f));
+    g.setFont(juce::FontOptions(15.0f));
+    g.drawFittedText(text, getRollArea().reduced(24), juce::Justification::centred, 3);
+}
+
+void PianoRollView::drawGrid(juce::Graphics& g, juce::Rectangle<int> area) const
+{
+    const int top = static_cast<int>(std::ceil(topMidi + 1.0));
+    const int bottom = static_cast<int>(std::floor(midiOfY(static_cast<float>(area.getBottom()))));
+
+    for (int midi = top; midi >= bottom; --midi)
+    {
+        const float y0 = yOfMidi(midi + 0.5);
+        const float y1 = yOfMidi(midi - 0.5);
+        const auto row = juce::Rectangle<float>(static_cast<float>(area.getX()), y0, static_cast<float>(area.getWidth()), y1 - y0).getIntersection(area.toFloat());
+
+        if (row.isEmpty())
+            continue;
+
+        const int pc = pitchClassOf(midi);
+        const bool inScale = snapMode != SnapMode::Scale || isInScale(pc, snapRoot, snapScale);
+        auto fill = isBlackKey(pc) ? kRowBlack : kRowWhite;
+
+        if (! inScale)
+            fill = fill.darker(0.25f);
+
+        g.setColour(fill);
+        g.fillRect(row);
+        g.setColour(pc == 0 ? kOctaveLine : kGridLine);
+        g.drawHorizontalLine(static_cast<int>(y1), row.getX(), row.getRight());
+    }
+
+    // 縦線（時間）
+    double step = 1.0;
+    for (const double candidate : { 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0 })
+    {
+        step = candidate;
+        if (candidate * pixelsPerSec >= 60.0)
+            break;
+    }
+
+    g.setColour(kGridLine);
+    for (double t = std::floor(viewStartSec / step) * step; xOfSec(t) < area.getRight(); t += step)
+    {
+        const float x = xOfSec(t);
+        if (x >= area.getX())
+            g.drawVerticalLine(static_cast<int>(x), static_cast<float>(area.getY()), static_cast<float>(area.getBottom()));
+    }
+}
+
+void PianoRollView::drawKeyboard(juce::Graphics& g) const
+{
+    const auto area = getKeyboardArea();
+    g.saveState();
+    g.reduceClipRegion(area);
+    g.fillAll(kBackground);
+
+    const int top = static_cast<int>(std::ceil(topMidi + 1.0));
+    const int bottom = static_cast<int>(std::floor(midiOfY(static_cast<float>(area.getBottom()))));
+
+    for (int midi = top; midi >= bottom; --midi)
+    {
+        const float y0 = yOfMidi(midi + 0.5);
+        const float y1 = yOfMidi(midi - 0.5);
+        const int pc = pitchClassOf(midi);
+        const bool black = isBlackKey(pc);
+
+        g.setColour(black ? juce::Colour(0xff15171b) : juce::Colour(0xffe6e9ef));
+        g.fillRect(juce::Rectangle<float>(0.0f, y0, static_cast<float>(area.getWidth()) * (black ? 0.62f : 1.0f), y1 - y0 - 1.0f));
+
+        if (pc == 0)
+        {
+            g.setColour(juce::Colour(0xff30343d));
+            g.setFont(juce::FontOptions(11.0f));
+            g.drawText("C" + juce::String(midi / 12 - 1), area.getWidth() - 28, static_cast<int>(y0), 26, static_cast<int>(y1 - y0), juce::Justification::centredRight);
+        }
+    }
+
+    g.restoreState();
+}
+
+void PianoRollView::drawRuler(juce::Graphics& g) const
+{
+    const auto area = getRulerArea();
+    g.setColour(juce::Colour(0xff15171b));
+    g.fillRect(area);
+
+    double step = 1.0;
+    for (const double candidate : { 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0 })
+    {
+        step = candidate;
+        if (candidate * pixelsPerSec >= 70.0)
+            break;
+    }
+
+    g.setFont(juce::FontOptions(11.0f));
+
+    for (double t = std::max(0.0, std::floor(viewStartSec / step) * step); xOfSec(t) < area.getRight(); t += step)
+    {
+        const float x = xOfSec(t);
+        if (x < area.getX())
+            continue;
+
+        g.setColour(kOctaveLine);
+        g.drawVerticalLine(static_cast<int>(x), static_cast<float>(area.getBottom() - 8), static_cast<float>(area.getBottom()));
+        g.setColour(kText);
+
+        const int minutes = static_cast<int>(t) / 60;
+        const double seconds = t - minutes * 60;
+        g.drawText(juce::String(minutes) + ":" + juce::String(seconds, step < 1.0 ? 2 : 0).paddedLeft('0', step < 1.0 ? 5 : 2),
+                   static_cast<int>(x) + 3, 2, 60, 14, juce::Justification::centredLeft);
+    }
+}
+
+void PianoRollView::drawNotes(juce::Graphics& g) const
+{
+    const auto* m = model();
+    if (m == nullptr)
+        return;
+
+    const auto roll = getRollArea().toFloat();
+
+    for (const auto& n : m->notes())
+    {
+        // 編集前の位置（ゴースト）
+        const bool pitchEdited = n.edit.pitchOffsetCents != 0.0f;
+        if (pitchEdited || n.edit.hasTimingEdit())
+        {
+            const float gx0 = xOfSec(n.startSec);
+            const float gx1 = xOfSec(n.endSec);
+            const float h = static_cast<float>(pixelsPerSemitone) * 0.82f;
+            const float cy = yOfMidi(n.detectedMidi);
+            g.setColour(kNoteGhost.withAlpha(0.35f));
+            g.drawRect(juce::Rectangle<float>(gx0, cy - h * 0.5f, std::max(2.0f, gx1 - gx0), h), 1.0f);
+        }
+
+        const auto b = noteBounds(n);
+        if (! b.intersects(roll))
+            continue;
+
+        const bool selected = selection.count(n.id) != 0;
+        g.setColour((selected ? kNoteSelected : kNoteFill).withAlpha(0.88f));
+        g.fillRoundedRectangle(b, 3.0f);
+        g.setColour((selected ? kNoteSelected : kNoteFill).brighter(0.5f));
+        g.drawRoundedRectangle(b, 3.0f, 1.0f);
+
+        // 音量に応じた濃淡の帯（ノートの下側）
+        g.setColour(juce::Colours::black.withAlpha(0.18f));
+        g.fillRect(b.withTop(b.getBottom() - b.getHeight() * 0.25f).reduced(1.0f, 0.0f));
+    }
+}
+
+void PianoRollView::drawCurve(juce::Graphics& g) const
+{
+    if (curve.empty())
+        return;
+
+    const double t0 = secOfX(static_cast<float>(getRollArea().getX())) - 0.05;
+    const double t1 = secOfX(static_cast<float>(getRollArea().getRight())) + 0.05;
+
+    const auto first = std::lower_bound(curve.begin(), curve.end(), t0, [] (const CurvePoint& p, double v) { return p.outSec < v; });
+
+    juce::Path path;
+    bool open = false;
+
+    for (auto it = first; it != curve.end() && it->outSec <= t1; ++it)
+    {
+        const float x = xOfSec(it->outSec);
+        const float y = yOfMidi(it->midi);
+
+        if (! open || it->breakBefore)
+            path.startNewSubPath(x, y);
+        else
+            path.lineTo(x, y);
+
+        open = true;
+    }
+
+    g.setColour(kCurve.withAlpha(0.85f));
+    g.strokePath(path, juce::PathStrokeType(1.2f));
+}
+
+void PianoRollView::drawWaveform(juce::Graphics& g) const
+{
+    const auto area = getWaveformArea();
+    g.setColour(juce::Colour(0xff15171b));
+    g.fillRect(area);
+
+    if (peaksSource == nullptr || peakMin.empty() || peaksSource->sampleRate <= 0.0)
+        return;
+
+    const double sr = peaksSource->sampleRate;
+    const float mid = static_cast<float>(area.getCentreY());
+    const float half = static_cast<float>(area.getHeight()) * 0.45f;
+
+    g.setColour(juce::Colour(0xff5fa8a0));
+
+    for (int x = area.getX(); x < area.getRight(); ++x)
+    {
+        const double s0 = cacheValid ? timeMap.toSource(secOfX(static_cast<float>(x))) : secOfX(static_cast<float>(x));
+        const double s1 = cacheValid ? timeMap.toSource(secOfX(static_cast<float>(x + 1))) : secOfX(static_cast<float>(x + 1));
+
+        if (s1 < 0.0)
+            continue;
+
+        const auto b0 = static_cast<std::int64_t>(std::floor(std::max(0.0, s0) * sr / kPeakBlock));
+        auto b1 = static_cast<std::int64_t>(std::floor(std::max(0.0, s1) * sr / kPeakBlock));
+        b1 = std::max(b1, b0);
+
+        if (b0 >= static_cast<std::int64_t>(peakMin.size()))
+            break;
+
+        b1 = std::min<std::int64_t>(b1, static_cast<std::int64_t>(peakMin.size()) - 1);
+
+        float lo = 0.0f, hi = 0.0f;
+        for (auto b = b0; b <= b1; ++b)
+        {
+            lo = std::min(lo, peakMin[static_cast<std::size_t>(b)]);
+            hi = std::max(hi, peakMax[static_cast<std::size_t>(b)]);
+        }
+
+        g.drawVerticalLine(x, mid - hi * half, mid - lo * half + 1.0f);
+    }
+}
+
+void PianoRollView::drawPlayhead(juce::Graphics& g) const
+{
+    if (playheadSec < 0.0)
+        return;
+
+    const float x = xOfSec(playheadSec);
+    const auto roll = getRollArea();
+
+    if (x >= roll.getX() && x <= roll.getRight())
+    {
+        g.setColour(kPlayhead);
+        g.drawVerticalLine(static_cast<int>(x), static_cast<float>(roll.getY()), static_cast<float>(roll.getBottom()));
+    }
+}
+
+//==============================================================================
+// 当たり判定
+const model::Note* PianoRollView::hitTestNote(juce::Point<float> p, DragKind* edge) const
+{
+    const auto* m = model();
+    if (m == nullptr || ! cacheValid)
+        return nullptr;
+
+    if (edge != nullptr)
+        *edge = DragKind::None;
+
+    // 後ろに描画されたもの（手前）を優先する
+    const model::Note* found = nullptr;
+
+    for (const auto& n : m->notes())
+    {
+        auto b = noteBounds(n).expanded(0.0f, 2.0f);
+
+        if (b.contains(p))
+            found = &n;
+    }
+
+    if (found != nullptr && edge != nullptr)
+    {
+        const auto b = noteBounds(*found);
+
+        if (b.getWidth() > 4.0f * kEdgeGrabPixels)
+        {
+            if (p.x - b.getX() < kEdgeGrabPixels)
+                *edge = DragKind::ResizeStart;
+            else if (b.getRight() - p.x < kEdgeGrabPixels)
+                *edge = DragKind::ResizeEnd;
+        }
+    }
+
+    return found;
+}
+
+bool PianoRollView::hitTestBoundary(juce::Point<float> p, model::NoteId* leftId) const
+{
+    const auto* m = model();
+    if (m == nullptr || ! cacheValid)
+        return false;
+
+    const auto& notes = m->notes();
+
+    for (std::size_t i = 0; i + 1 < notes.size(); ++i)
+    {
+        const auto& a = notes[i];
+        const auto& b = notes[i + 1];
+
+        if ((b.outStartSec() - a.outEndSec()) * pixelsPerSec > 10.0)
+            continue;
+
+        const float x = xOfSec(0.5 * (a.outEndSec() + b.outStartSec()));
+        const float yTop = std::min(noteBounds(a).getY(), noteBounds(b).getY());
+        const float yBottom = std::max(noteBounds(a).getBottom(), noteBounds(b).getBottom());
+
+        if (std::abs(p.x - x) <= 6.0f && p.y >= yTop - 3.0f && p.y <= yBottom + 3.0f)
+        {
+            *leftId = a.id;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+//==============================================================================
+// マウス操作
+void PianoRollView::mouseMove(const juce::MouseEvent& e)
+{
+    hoverSec = secOfX(static_cast<float>(e.x));
+
+    if (tool == Tool::Split)
+    {
+        setMouseCursor(juce::MouseCursor::CrosshairCursor);
+        return;
+    }
+
+    if (tool == Tool::Boundary)
+    {
+        model::NoteId id = 0;
+        setMouseCursor(hitTestBoundary(e.position, &id) ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::NormalCursor);
+        return;
+    }
+
+    DragKind edge = DragKind::None;
+    const auto* hit = hitTestNote(e.position, &edge);
+
+    if (hit == nullptr)
+        setMouseCursor(juce::MouseCursor::NormalCursor);
+    else if (edge != DragKind::None)
+        setMouseCursor(juce::MouseCursor::LeftRightResizeCursor);
+    else
+        setMouseCursor(e.mods.isAltDown() ? juce::MouseCursor::DraggingHandCursor : juce::MouseCursor::UpDownResizeCursor);
+}
+
+void PianoRollView::mouseDown(const juce::MouseEvent& e)
+{
+    grabKeyboardFocus();
+
+    auto* m = model();
+    drag = {};
+    drag.startPoint = e.getPosition();
+    drag.startViewSec = viewStartSec;
+    drag.startTopMidi = topMidi;
+
+    if (m == nullptr || ! cacheValid)
+    {
+        if (e.mods.isMiddleButtonDown() || e.mods.isRightButtonDown())
+            drag.kind = DragKind::Pan;
+        return;
+    }
+
+    if (e.mods.isMiddleButtonDown() || e.mods.isRightButtonDown())
+    {
+        drag.kind = DragKind::Pan;
+        return;
+    }
+
+    if (! getRollArea().contains(e.getPosition()))
+        return;
+
+    if (tool == Tool::Split)
+    {
+        const auto* hit = hitTestNote(e.position, nullptr);
+
+        if (hit != nullptr)
+        {
+            const double srcSec = timeMap.toSource(secOfX(e.position.x));
+            model::NoteId right = 0;
+
+            if (m->splitNote(hit->id, srcSec, &right))
+            {
+                setSelection({ right });
+                notifyModelEdited(true);
+            }
+        }
+
+        return;
+    }
+
+    if (tool == Tool::Boundary)
+    {
+        model::NoteId left = 0;
+
+        if (hitTestBoundary(e.position, &left))
+        {
+            drag.kind = DragKind::Boundary;
+            drag.primary = left;
+            m->beginEdit();
+            editGestureOpen = true;
+        }
+
+        return;
+    }
+
+    // 選択ツール
+    DragKind edge = DragKind::None;
+    const auto* hit = hitTestNote(e.position, &edge);
+
+    if (hit == nullptr)
+    {
+        if (! e.mods.isShiftDown() && ! e.mods.isCtrlDown())
+            setSelection({});
+
+        drag.kind = DragKind::Rubber;
+        drag.rubber = juce::Rectangle<int>(e.getPosition(), e.getPosition());
+        return;
+    }
+
+    auto ids = selection;
+
+    if (e.mods.isShiftDown() || e.mods.isCtrlDown())
+    {
+        if (ids.count(hit->id) != 0)
+            ids.erase(hit->id);
+        else
+            ids.insert(hit->id);
+    }
+    else if (ids.count(hit->id) == 0)
+    {
+        ids = { hit->id };
+    }
+
+    setSelection(ids);
+
+    if (selection.count(hit->id) == 0)
+        return;
+
+    drag.primary = hit->id;
+    drag.kind = edge != DragKind::None ? edge : (e.mods.isAltDown() ? DragKind::Time : DragKind::Pitch);
+
+    for (const auto id : selection)
+        if (const auto* n = m->findNote(id))
+            drag.startNotes.push_back(*n);
+
+    m->beginEdit();
+    editGestureOpen = true;
+}
+
+void PianoRollView::applyDrag(const juce::MouseEvent& e)
+{
+    auto* m = model();
+    if (m == nullptr)
+        return;
+
+    const double dxSec = static_cast<double>(e.x - drag.startPoint.x) / pixelsPerSec;
+
+    switch (drag.kind)
+    {
+        case DragKind::Pitch:
+        {
+            const double dyMidi = -static_cast<double>(e.y - drag.startPoint.y) / pixelsPerSemitone;
+            const model::Note* primary = nullptr;
+
+            for (const auto& n : drag.startNotes)
+                if (n.id == drag.primary)
+                    primary = &n;
+
+            if (primary == nullptr)
+                break;
+
+            const float startTarget = primary->targetMidi();
+            const float snapped = snapMidi(startTarget + static_cast<float>(dyMidi), snapMode, snapRoot, snapScale);
+            const float delta = snapped - startTarget;
+
+            for (const auto& n : drag.startNotes)
+                m->setNotePitchOffset(n.id, n.edit.pitchOffsetCents + delta * 100.0f);
+
+            break;
+        }
+
+        case DragKind::Time:
+        {
+            // 移動方向の先頭のノートから順に動かす（隣のノートに食い込まないように）
+            auto notes = drag.startNotes;
+            std::sort(notes.begin(), notes.end(), [dxSec] (const model::Note& a, const model::Note& b)
+            {
+                return dxSec > 0.0 ? a.startSec > b.startSec : a.startSec < b.startSec;
+            });
+
+            for (const auto& n : notes)
+            {
+                const double start = std::max(0.0, n.outStartSec() + dxSec);
+                const double end = start + (n.outEndSec() - n.outStartSec());
+                m->setNoteTiming(n.id, start, end);
+            }
+
+            break;
+        }
+
+        case DragKind::ResizeStart:
+        case DragKind::ResizeEnd:
+        {
+            for (const auto& n : drag.startNotes)
+            {
+                if (n.id != drag.primary)
+                    continue;
+
+                double start = n.outStartSec();
+                double end = n.outEndSec();
+
+                if (drag.kind == DragKind::ResizeStart)
+                    start = std::clamp(start + dxSec, 0.0, end - model::EditModel::kMinNoteDurationSec);
+                else
+                    end = std::max(end + dxSec, start + model::EditModel::kMinNoteDurationSec);
+
+                m->setNoteTiming(n.id, start, end);
+            }
+
+            break;
+        }
+
+        case DragKind::Boundary:
+        {
+            const double srcSec = timeMap.toSource(secOfX(static_cast<float>(e.x)));
+            m->moveBoundary(drag.primary, srcSec);
+            break;
+        }
+
+        default: break;
+    }
+
+    notifyModelEdited(false);
+}
+
+void PianoRollView::mouseDrag(const juce::MouseEvent& e)
+{
+    switch (drag.kind)
+    {
+        case DragKind::Pan:
+            viewStartSec = drag.startViewSec - static_cast<double>(e.x - drag.startPoint.x) / pixelsPerSec;
+            topMidi = drag.startTopMidi + static_cast<double>(e.y - drag.startPoint.y) / pixelsPerSemitone;
+            clampView();
+            repaint();
+            break;
+
+        case DragKind::Rubber:
+        {
+            drag.rubber = juce::Rectangle<int>(drag.startPoint, e.getPosition());
+
+            std::set<model::NoteId> ids;
+            if (e.mods.isShiftDown() || e.mods.isCtrlDown())
+                ids = selection;
+
+            if (const auto* m = model())
+                for (const auto& n : m->notes())
+                    if (noteBounds(n).toNearestInt().intersects(drag.rubber))
+                        ids.insert(n.id);
+
+            if (ids != selection)
+                setSelection(ids);
+            else
+                repaint();
+
+            break;
+        }
+
+        case DragKind::None: break;
+
+        default: applyDrag(e); break;
+    }
+}
+
+void PianoRollView::mouseUp(const juce::MouseEvent&)
+{
+    if (editGestureOpen)
+    {
+        if (auto* m = model())
+            m->endEdit();
+
+        editGestureOpen = false;
+        notifyModelEdited(true);
+    }
+
+    drag = {};
+    repaint();
+}
+
+void PianoRollView::mouseDoubleClick(const juce::MouseEvent& e)
+{
+    auto* m = model();
+    if (m == nullptr || tool != Tool::Select)
+        return;
+
+    if (const auto* hit = hitTestNote(e.position, nullptr))
+    {
+        m->resetNote(hit->id);
+        notifyModelEdited(true);
+    }
+}
+
+void PianoRollView::mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)
+{
+    if (e.mods.isCtrlDown() || e.mods.isCommandDown())
+    {
+        const double factor = std::exp(static_cast<double>(wheel.deltaY) * 1.5);
+
+        if (e.mods.isShiftDown())
+        {
+            const double anchor = midiOfY(e.position.y);
+            pixelsPerSemitone *= factor;
+            pixelsPerSemitone = std::clamp(pixelsPerSemitone, 6.0, 40.0);
+            topMidi = anchor + (e.position.y - getRollArea().getY()) / pixelsPerSemitone;
+        }
+        else
+        {
+            const double anchor = secOfX(e.position.x);
+            pixelsPerSec *= factor;
+            pixelsPerSec = std::clamp(pixelsPerSec, 8.0, 5000.0);
+            viewStartSec = anchor - (e.position.x - getRollArea().getX()) / pixelsPerSec;
+        }
+    }
+    else if (e.mods.isShiftDown() || std::abs(wheel.deltaX) > std::abs(wheel.deltaY))
+    {
+        const float delta = std::abs(wheel.deltaX) > std::abs(wheel.deltaY) ? -wheel.deltaX : wheel.deltaY;
+        viewStartSec -= static_cast<double>(delta) * 600.0 / pixelsPerSec;
+    }
+    else
+    {
+        topMidi += static_cast<double>(wheel.deltaY) * 8.0;
+    }
+
+    clampView();
+    repaint();
+}
+
+//==============================================================================
+// キー操作・編集コマンド
+bool PianoRollView::keyPressed(const juce::KeyPress& key)
+{
+    auto* m = model();
+    const auto mods = key.getModifiers();
+    const auto code = key.getKeyCode();
+
+    if (mods.isCtrlDown() || mods.isCommandDown())
+    {
+        if (code == 'Z' || code == 'z')
+        {
+            if (mods.isShiftDown())
+                redo();
+            else
+                undo();
+            return true;
+        }
+
+        if (code == 'Y' || code == 'y')
+        {
+            redo();
+            return true;
+        }
+
+        if (code == 'A' || code == 'a')
+        {
+            selectAll();
+            return true;
+        }
+
+        return false;
+    }
+
+    if (code == juce::KeyPress::deleteKey || code == juce::KeyPress::backspaceKey)
+    {
+        resetSelected();
+        return true;
+    }
+
+    if (code == 'J' || code == 'j')
+    {
+        mergeSelected();
+        return true;
+    }
+
+    if ((code == 'S' || code == 's') && m != nullptr && cacheValid)
+    {
+        // マウス位置のノートを、その位置で分割する
+        for (const auto& n : m->notes())
+        {
+            if (hoverSec >= n.outStartSec() && hoverSec < n.outEndSec())
+            {
+                model::NoteId right = 0;
+
+                if (m->splitNote(n.id, timeMap.toSource(hoverSec), &right))
+                {
+                    setSelection({ right });
+                    notifyModelEdited(true);
+                }
+
+                break;
+            }
+        }
+
+        return true;
+    }
+
+    if (code == '+' || code == '=')
+    {
+        pixelsPerSec *= 1.25;
+        clampView();
+        repaint();
+        return true;
+    }
+
+    if (code == '-')
+    {
+        pixelsPerSec /= 1.25;
+        clampView();
+        repaint();
+        return true;
+    }
+
+    return false;
+}
+
+void PianoRollView::undo()
+{
+    if (auto* m = model(); m != nullptr && m->undo())
+    {
+        pruneSelection();
+        notifyModelEdited(true);
+    }
+}
+
+void PianoRollView::redo()
+{
+    if (auto* m = model(); m != nullptr && m->redo())
+    {
+        pruneSelection();
+        notifyModelEdited(true);
+    }
+}
+
+void PianoRollView::mergeSelected()
+{
+    auto* m = model();
+    if (m == nullptr || selection.empty())
+        return;
+
+    // 選択中のノートのうち、後ろから順に直後のノートと結合する（id が変わらないように）
+    std::vector<std::size_t> indices;
+    for (const auto id : selection)
+        if (const auto i = m->indexOf(id); i != model::EditModel::npos)
+            indices.push_back(i);
+
+    std::sort(indices.rbegin(), indices.rend());
+
+    // 1 つだけ選択している場合は直後のノートと、複数選択の場合は選択中のノート同士を結合する
+    m->beginEdit();
+    bool changed = false;
+
+    if (indices.size() == 1)
+    {
+        changed = m->mergeWithNext(m->notes()[indices.front()].id);
+    }
+    else
+    {
+        for (const auto i : indices)
+        {
+            if (i == 0)
+                continue;
+
+            const auto& previous = m->notes()[i - 1];
+            if (selection.count(previous.id) != 0)
+                changed = m->mergeWithNext(previous.id) || changed;
+        }
+    }
+
+    m->endEdit();
+
+    if (changed)
+    {
+        pruneSelection();
+        notifyModelEdited(true);
+    }
+}
+
+void PianoRollView::resetSelected()
+{
+    auto* m = model();
+    if (m == nullptr || selection.empty())
+        return;
+
+    m->beginEdit();
+    for (const auto id : selection)
+        m->resetNote(id);
+    m->endEdit();
+    notifyModelEdited(true);
+}
+
+void PianoRollView::selectAll()
+{
+    auto* m = model();
+    if (m == nullptr)
+        return;
+
+    std::set<model::NoteId> ids;
+    for (const auto& n : m->notes())
+        ids.insert(n.id);
+    setSelection(std::move(ids));
+}
+
+void PianoRollView::beginParameterEdit()
+{
+    if (auto* m = model(); m != nullptr && ! editGestureOpen)
+    {
+        m->beginEdit();
+        editGestureOpen = true;
+    }
+}
+
+void PianoRollView::applyToSelection(const std::function<void(model::NoteEdit&)>& change)
+{
+    auto* m = model();
+    if (m == nullptr || selection.empty())
+        return;
+
+    const bool wrap = ! editGestureOpen;
+    if (wrap)
+        m->beginEdit();
+
+    for (const auto id : selection)
+    {
+        if (const auto* n = m->findNote(id))
+        {
+            auto edit = n->edit;
+            change(edit);
+            m->setNoteEdit(id, edit);
+        }
+    }
+
+    if (wrap)
+    {
+        m->endEdit();
+        notifyModelEdited(true);
+    }
+    else
+    {
+        notifyModelEdited(false);
+    }
+}
+
+void PianoRollView::endParameterEdit()
+{
+    if (auto* m = model(); m != nullptr && editGestureOpen)
+    {
+        m->endEdit();
+        editGestureOpen = false;
+        notifyModelEdited(true);
+    }
+}
+} // namespace koenote::ui

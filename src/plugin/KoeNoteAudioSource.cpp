@@ -79,8 +79,8 @@ KoeNoteAudioSource::KoeNoteAudioSource(ARA::PlugIn::Document* document, ARA::ARA
 
 KoeNoteAudioSource::~KoeNoteAudioSource()
 {
+    stopLoading(); // 先にスレッドを止めてから、保留中の通知を取り消す
     cancelPendingUpdate();
-    stopLoading();
 }
 
 void KoeNoteAudioSource::startLoading()

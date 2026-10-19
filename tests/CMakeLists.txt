@@ -2,8 +2,10 @@ add_executable(koenote_tests
     test_byte_stream.cpp
     test_edit_model.cpp
     test_passthrough.cpp
+    test_pipeline.cpp
     test_pitch_analysis.cpp
     test_processing_gate.cpp
+    test_robustness.cpp
     test_psola.cpp
     test_time_map.cpp)
 
@@ -13,4 +15,5 @@ if(MSVC)
     target_compile_options(koenote_tests PRIVATE /W4 /permissive- /utf-8)
 endif()
 
-catch_discover_tests(koenote_tests)
+# テスト名が日本語のため、catch_discover_tests（コマンドライン経由の個別実行）は使わず、全体を 1 つの test として実行する
+add_test(NAME koenote_tests COMMAND koenote_tests)

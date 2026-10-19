@@ -82,7 +82,8 @@ RenderedAudio renderEditedAudio(const RenderInput& input, const RenderProgress& 
 
     const double srcDurationSec = static_cast<double>(numSrc) / sr;
     const double outDurationSec = std::max(timeMap.toOutput(srcDurationSec), 0.0);
-    const auto numOut = static_cast<std::size_t>(std::ceil(outDurationSec * sr)) + 1;
+    const auto maxOut = numSrc * 2 + static_cast<std::size_t>(30.0 * sr);
+    const auto numOut = std::min(static_cast<std::size_t>(std::ceil(outDurationSec * sr)) + 1, maxOut);
 
     result.numChannels = input.numChannels;
     result.sampleRate = sr;
@@ -105,7 +106,7 @@ RenderedAudio renderEditedAudio(const RenderInput& input, const RenderProgress& 
     };
 
     const double unvoicedStepOut = 0.005;
-    const double outEnd = outDurationSec;
+    const double outEnd = std::min(outDurationSec, static_cast<double>(numOut - 1) / sr);
     double t = std::max(0.0, timeMap.toOutput(static_cast<double>(marks.front().position) / sr));
     std::size_t hint = 0; // 直前に使ったマークの添字（探索の起点）
     std::size_t iteration = 0;

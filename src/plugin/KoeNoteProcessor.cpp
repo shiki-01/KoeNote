@@ -39,6 +39,14 @@ void KoeNoteProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Midi
 {
     juce::ScopedNoDenormals noDenormals;
 
+    // Editor に再生位置を渡す（atomic の書き込みのみ）
+    if (auto* host = getPlayHead())
+    {
+        const auto position = host->getPosition();
+        playheadPlaying.store(position.hasValue() && position->getIsPlaying(), std::memory_order_relaxed);
+        playheadSeconds.store(position.hasValue() ? position->getTimeInSeconds().orFallback(0.0) : 0.0, std::memory_order_relaxed);
+    }
+
     // ARA の再生レンダラーが処理できない場合（ARA 非対応のホスト等）は入力をそのまま返す
     if (! processBlockForARA(buffer, isRealtime(), getPlayHead()))
         processBlockBypassed(buffer, midi);

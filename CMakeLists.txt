@@ -9,6 +9,7 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
 option(KOENOTE_BUILD_PLUGIN "VST3 プラグイン本体をビルドする" ON)
 option(KOENOTE_BUILD_TESTS "Catch2 単体テストをビルドする" ON)
+option(KOENOTE_BUILD_TOOLS "UI プレビューなどの開発用ツールをビルドする" ON)
 option(KOENOTE_COPY_PLUGIN "ビルド後に VST3 をユーザーの VST3 フォルダへコピーする" OFF)
 
 # 依存ライブラリは external/ 以下の git submodule（JUCE 8.0.x、ARA SDK 2.3、Catch2 3.x）
@@ -20,9 +21,7 @@ endif()
 
 if(KOENOTE_BUILD_TESTS)
     add_subdirectory(external/Catch2)
-    list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/external/Catch2/extras)
     include(CTest)
-    include(Catch)
 endif()
 
 # JUCE に依存しない純粋な C++20 のコア（解析 interface / 編集モデル / レンダリング）
@@ -30,6 +29,10 @@ add_subdirectory(src)
 
 if(KOENOTE_BUILD_PLUGIN)
     add_subdirectory(src/plugin)
+endif()
+
+if(KOENOTE_BUILD_PLUGIN AND KOENOTE_BUILD_TOOLS)
+    add_subdirectory(tools/ui_preview)
 endif()
 
 if(KOENOTE_BUILD_TESTS)

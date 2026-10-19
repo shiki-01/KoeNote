@@ -1,6 +1,7 @@
 #pragma once
 
 #include "model/EditModel.h"
+#include "plugin/EditTarget.h"
 #include "plugin/KoeNoteAudioSource.h"
 #include "render/PassthroughRenderer.h"
 #include "render/ProcessingGate.h"
@@ -15,14 +16,6 @@
 
 namespace koenote::plugin
 {
-enum class AnalysisState
-{
-    WaitingForAudio, // ホストからの音声取得待ち
-    Analyzing,
-    Done,
-    Failed
-};
-
 // レンダリング済みの音声（編集内容を反映したもの）。出力時間軸（AudioModification の時間）で保持する。
 struct RenderedClip
 {
@@ -43,7 +36,7 @@ struct RenderedClip
 //  - worker thread : 解析（F0 推定・ノート分割）とレンダリング。モデルには触れず、値コピーを使う
 //  - audio thread  : audioForPlayback() だけ（ProcessingGate の ReadScope 内）
 class KoeNoteAudioModification final : public juce::ARAAudioModification,
-                                       public juce::ChangeBroadcaster,
+                                       public EditTarget,
                                        private juce::AsyncUpdater
 {
 public:
@@ -55,22 +48,22 @@ public:
 
     //==========================================================================
     // message thread
-    model::EditModel& getModel() noexcept { return model; }
-    const model::EditModel& getModel() const noexcept { return model; }
+    model::EditModel& getModel() noexcept override { return model; }
+    const model::EditModel& getModel() const noexcept override { return model; }
 
     // モデルを編集した後に呼ぶ。レンダリングを要求し、UI とホストへ通知する。
-    void notifyEdited();
+    void notifyEdited() override;
     // 保存データから復元したモデルに差し替える
     void replaceModel(model::EditModel restored);
     // 元音声の読み込み完了時に呼ばれる
     void onSourceAudioReady();
 
-    AnalysisState getAnalysisState() const noexcept { return analysisState.load(); }
-    float getAnalysisProgress() const noexcept { return analysisProgress.load(); }
-    bool isRenderPending() const noexcept { return renderPending.load(); }
+    AnalysisState getAnalysisState() const noexcept override { return analysisState.load(); }
+    float getAnalysisProgress() const noexcept override { return analysisProgress.load(); }
+    bool isRenderPending() const noexcept override { return renderPending.load(); }
 
     // 元音声（編集前）。UI の波形表示用。未読み込みなら nullptr。
-    std::shared_ptr<const SourceAudioData> getSourceAudio() const;
+    std::shared_ptr<const SourceAudioData> getSourceAudio() const override;
 
     //==========================================================================
     // audio thread（ProcessingGate の ReadScope 内でのみ呼ぶ）

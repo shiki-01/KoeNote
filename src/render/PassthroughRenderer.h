@@ -23,4 +23,15 @@ void accumulatePassthrough(const AudioView& src,
                            int numDstChannels,
                            int dstOffset,
                            int numFrames) noexcept;
+// サンプルレートが異なる音声の線形補間による加算。出力の i 番目のサンプルは、
+// src 上の位置 srcStartPosition + i * step（step = srcRate / dstRate）を線形補間して得る。
+// 範囲外は無音。step == 1 で srcStartPosition が整数なら accumulatePassthrough と同じ結果になる。
+// 品質は簡易的（折り返し雑音の除去なし）。レート不一致時のフォールバックとして使う。
+void accumulateResampled(const AudioView& src,
+                         double srcStartPosition,
+                         double step,
+                         float* const* dst,
+                         int numDstChannels,
+                         int dstOffset,
+                         int numFrames) noexcept;
 } // namespace koenote::render

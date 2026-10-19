@@ -1,6 +1,6 @@
 #pragma once
 
-#include "render/PassthroughRenderer.h"
+#include "plugin/SourceAudioData.h"
 #include "render/ProcessingGate.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -13,18 +13,6 @@
 
 namespace koenote::plugin
 {
-// ホストから取得した元音声の全サンプルを保持する（非インターリーブ float）。
-struct SourceAudioData
-{
-    int numChannels = 0;
-    std::int64_t numFrames = 0;
-    double sampleRate = 0.0;
-    std::vector<std::vector<float>> channels;
-    std::vector<const float*> channelPointers;
-
-    render::AudioView view() const noexcept { return { channelPointers.data(), numChannels, numFrames }; }
-};
-
 // ARAAudioSource の拡張。サンプルアクセスが有効になった時点で、別スレッドが全サンプルを読み込む。
 // オーディオスレッドは読み込み済みのデータだけを参照し、ホストの reader には触れない。
 class KoeNoteAudioSource final : public juce::ARAAudioSource,

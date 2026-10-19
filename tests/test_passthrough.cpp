@@ -83,6 +83,44 @@ TEST_CASE("ステレオ音声のモノラル出力は平均になる")
     CHECK(m == std::vector<float> { 4, 6 });
 }
 
+TEST_CASE("step が 1 のリサンプルはパススルーと一致する")
+{
+    Stereo src({ 1, 2, 3, 4 }, { 5, 6, 7, 8 });
+    std::vector<float> l(4, 0.0f), r(4, 0.0f);
+    float* dst[2] = { l.data(), r.data() };
+
+    accumulateResampled(src.view(), 0.0, 1.0, dst, 2, 0, 4);
+
+    CHECK(l == std::vector<float> { 1, 2, 3, 4 });
+    CHECK(r == std::vector<float> { 5, 6, 7, 8 });
+}
+
+TEST_CASE("step が 0.5 のリサンプルは線形補間で 2 倍に引き伸ばす")
+{
+    std::vector<float> mono { 0, 2, 4, 6 };
+    const float* ptrs[1] = { mono.data() };
+    AudioView src { ptrs, 1, 4 };
+
+    std::vector<float> out(6, 0.0f);
+    float* dst[1] = { out.data() };
+    accumulateResampled(src, 0.0, 0.5, dst, 1, 0, 6);
+
+    CHECK(out == std::vector<float> { 0, 1, 2, 3, 4, 5 });
+}
+
+TEST_CASE("リサンプルは範囲外を無音として扱う")
+{
+    std::vector<float> mono { 1, 1, 1 };
+    const float* ptrs[1] = { mono.data() };
+    AudioView src { ptrs, 1, 3 };
+
+    std::vector<float> out(5, 0.0f);
+    float* dst[1] = { out.data() };
+    accumulateResampled(src, -2.0, 1.0, dst, 1, 0, 5);
+
+    CHECK(out == std::vector<float> { 0, 0, 1, 1, 1 });
+}
+
 TEST_CASE("元音声より後ろの範囲では何も書き込まない")
 {
     Stereo src({ 1, 2 }, { 1, 2 });
