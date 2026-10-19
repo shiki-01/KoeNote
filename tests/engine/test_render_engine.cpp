@@ -247,6 +247,53 @@ TEST_CASE("続けて要求すると、最後の要求の結果が公開される
     CHECK_THAT(medianF0(v.edited, 0.5, 1.2), WithinAbs(expected, expected * 0.015));
 }
 
+TEST_CASE("書き出しの待機: レンダリングの要求が残っている間は isSettled が false")
+{
+    Harness h(makeVoice());
+    h.engine.requestAnalysis();
+    REQUIRE(h.waitFor([&] { return h.analysis.has_value(); }));
+    CHECK(h.engine.isSettled());
+
+    h.engine.requestRender(makeRequest(*h.analysis, 10, 200.0f));
+    CHECK_FALSE(h.engine.isSettled());
+
+    REQUIRE(h.waitFor([&] { return h.engine.isSettled(); }));
+    CHECK_FALSE(h.engine.isRenderPending());
+}
+
+TEST_CASE("書き出しの待機: ニューラル加工を選ぶと、合成が終わる（成功・失敗とも）まで isSettled が false")
+{
+    Harness h(makeVoice());
+    h.engine.setNeuralDebounceMs(300);
+    h.engine.requestAnalysis();
+    REQUIRE(h.waitFor([&] { return h.analysis.has_value(); }));
+
+    h.engine.requestRender(makeRequest(*h.analysis, 11, 200.0f, 1));
+
+    // TD-PSOLA の結果が公開された直後は、まだニューラル加工の待ち時間中
+    REQUIRE(h.waitFor([&] { return ! h.engine.isRenderPending(); }));
+    CHECK_FALSE(h.engine.isSettled());
+
+    REQUIRE(h.waitFor([&] { return h.engine.isSettled(); }, 60000));
+    const auto state = h.engine.neuralInfo().state;
+    CHECK((state == plugin::NeuralInfo::State::Ready || state == plugin::NeuralInfo::State::Failed));
+}
+
+TEST_CASE("書き出しの待機: resetRendering の後は、ニューラル加工の完了を待たない")
+{
+    Harness h(makeVoice());
+    h.engine.setNeuralDebounceMs(5000);
+    h.engine.requestAnalysis();
+    REQUIRE(h.waitFor([&] { return h.analysis.has_value(); }));
+
+    h.engine.requestRender(makeRequest(*h.analysis, 12, 200.0f, 1));
+    REQUIRE(h.waitFor([&] { return ! h.engine.isRenderPending(); }));
+    CHECK_FALSE(h.engine.isSettled());
+
+    h.engine.resetRendering();
+    CHECK(h.engine.isSettled());
+}
+
 TEST_CASE("resetRendering は編集済みの音声を捨てて元音声へ戻す")
 {
     Harness h(makeVoice());

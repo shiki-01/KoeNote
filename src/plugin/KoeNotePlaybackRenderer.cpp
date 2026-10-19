@@ -24,11 +24,64 @@ void KoeNotePlaybackRenderer::releaseResources()
     juce::ARAPlaybackRenderer::releaseResources();
 }
 
+void KoeNotePlaybackRenderer::waitUntilReadyForExport() noexcept
+{
+    // ニューラル加工は 3 分の音声で約 30 秒かかる。複数のクリップや長い音声を見込んで上限を決める。
+    // 読み込めない音声（ホストがサンプルの読み出しを許可しない等）があっても、止まるのは 1 回だけ（準備ができるまで累計は戻らない）。
+    constexpr int maxWaitMs = 5 * 60 * 1000;
+    constexpr int pollMs = 20;
+
+    // 解析結果の反映は message thread で行われる。書き出しが message thread で呼ばれる場合は、
+    // それを待つと進まないため、worker thread だけで進む処理（レンダリング・ニューラル加工）だけを待つ。
+    const bool includeAnalysis = ! juce::MessageManager::existsAndIsCurrentThread();
+
+    while (exportWaitMs < maxWaitMs)
+    {
+        bool ready = true;
+
+        {
+            // 判定の間だけ ARA モデルに触れる。待機（sleep）はゲートの外で行う（結果の公開がゲートの writer を使うため）。
+            const auto scope = gate.tryRead();
+
+            if (! scope.locked())
+            {
+                ready = false;
+            }
+            else
+            {
+                for (const auto& region : getPlaybackRegions())
+                {
+                    const auto* modification = static_cast<const KoeNoteAudioModification*>(region->getAudioModification());
+
+                    if (! modification->isReadyForExport(includeAnalysis))
+                    {
+                        ready = false;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (ready)
+        {
+            exportWaitMs = 0;
+            return;
+        }
+
+        juce::Thread::sleep(pollMs);
+        exportWaitMs += pollMs;
+    }
+}
+
 bool KoeNotePlaybackRenderer::processBlock(juce::AudioBuffer<float>& buffer,
-                                           juce::AudioProcessor::Realtime,
+                                           juce::AudioProcessor::Realtime realtime,
                                            const juce::AudioPlayHead::PositionInfo& positionInfo) noexcept
 {
     buffer.clear();
+
+    // 書き出し（オフライン処理）では、編集中のプレビュー（TD-PSOLA）ではなく最終的な結果を使う（要件 4章）
+    if (realtime == juce::AudioProcessor::Realtime::no && positionInfo.getIsPlaying())
+        waitUntilReadyForExport();
 
     // ARA モデルの編集中や、レンダリング結果の差し替え中は何も読まない（無音を返す）
     const auto scope = gate.tryRead();

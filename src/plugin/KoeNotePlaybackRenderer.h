@@ -28,8 +28,15 @@ public:
     using juce::ARAPlaybackRenderer::processBlock;
 
 private:
+    // オフライン処理（書き出し）のとき、全リージョンの解析・レンダリング・ニューラル加工が終わるまで待つ。
+    // リアルタイム再生では呼ばない。待ち時間の上限を超えたら、その時点の結果（TD-PSOLA など）で処理を続ける。
+    void waitUntilReadyForExport() noexcept;
+
     render::ProcessingGate& gate;
     double sampleRate = 48000.0;
     int numChannels = 2;
+
+    // 書き出しの待ち時間の累計（ミリ秒）。全リージョンの準備ができたら 0 に戻す。
+    int exportWaitMs = 0;
 };
 } // namespace koenote::plugin

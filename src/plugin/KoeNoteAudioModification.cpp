@@ -60,6 +60,7 @@ void KoeNoteAudioModification::onSourceAudioReady()
         requestRender();
     }
 
+    startedWithAudio = true;
     sendChangeMessage();
 }
 
@@ -67,6 +68,7 @@ void KoeNoteAudioModification::replaceModel(model::EditModel restored)
 {
     model = std::move(restored);
     analysisState = model.hasAnalysis() ? AnalysisState::Done : AnalysisState::WaitingForAudio;
+    startedWithAudio = false;
 
     // 音声が読み込み済みなら、復元した編集内容を反映する
     if (getAudioSource<KoeNoteAudioSource>()->isLoaded())
@@ -80,6 +82,7 @@ void KoeNoteAudioModification::requestReanalysis()
     // 編集内容は破棄される。再生は解析が終わるまで元音声のままになる。
     model = model::EditModel {};
     analysisState = AnalysisState::WaitingForAudio;
+    startedWithAudio = false;
 
     // 実行中・待機中のレンダリングを取り消し、編集済みの音声を捨てて元音声へ戻す
     engine.resetRendering();

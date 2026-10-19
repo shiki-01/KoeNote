@@ -194,6 +194,7 @@ void RenderEngine::resetRendering()
     }
 
     renderPending = false;
+    neuralTargetToken = 0;
     publishNeural(nullptr);
     publishClip(nullptr, 0);
 
@@ -235,6 +236,17 @@ CompareState RenderEngine::getCompare() const
     s.startSec = compareStart.load();
     s.endSec = compareEnd.load();
     return s;
+}
+
+bool RenderEngine::isSettled() const noexcept
+{
+    if (renderPending.load())
+        return false;
+
+    const auto target = neuralTargetToken.load();
+
+    // 対象の要求がより新しい要求で置き換えられた場合は、その要求の状態（renderPending）で判断する
+    return target == 0 || target != latestRequestToken.load() || neuralDoneToken.load() == target;
 }
 
 NeuralInfo RenderEngine::neuralInfo() const
@@ -480,6 +492,10 @@ void RenderEngine::runRender()
     if (latestRequestToken.load() != token)
         return;
 
+    const bool useNeural = request.settings.renderMode == 1 && audible;
+    // renderPending を下ろす前に設定する（isSettled が途中の状態を「完了」と見なさないように）
+    neuralTargetToken = useNeural ? token : 0;
+
     publishClip(std::move(newClip), request.revision);
     renderPending = false;
 
@@ -492,7 +508,7 @@ void RenderEngine::runRender()
         wake();
 
     // 高品質のニューラル加工（F-17）。先に TD-PSOLA の結果が再生されるため、音切れは出ない。
-    if (request.settings.renderMode == 1 && audible)
+    if (useNeural)
     {
         runNeural(audio, request.notes, request.track, render::TimeMap::Pins::from(request.settings), token, request.revision);
     }
@@ -538,6 +554,7 @@ void RenderEngine::runNeural(const std::shared_ptr<const SourceAudioData>& audio
             neuralMessage = juce::String::fromUTF8(error.c_str());
         }
         neuralState = NeuralInfo::State::Failed;
+        neuralDoneToken = token;
 
         if (wake)
             wake();
@@ -569,6 +586,7 @@ void RenderEngine::runNeural(const std::shared_ptr<const SourceAudioData>& audio
                 neuralMessage = juce::String::fromUTF8(error.c_str());
             }
             neuralState = NeuralInfo::State::Failed;
+            neuralDoneToken = token;
         }
         else
         {
@@ -594,6 +612,7 @@ void RenderEngine::runNeural(const std::shared_ptr<const SourceAudioData>& audio
     publishNeural(std::move(result));
     neuralState = NeuralInfo::State::Ready;
     neuralProgress = 1.0f;
+    neuralDoneToken = token;
 
     {
         const std::lock_guard<std::mutex> lock(handoffMutex);

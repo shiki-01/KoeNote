@@ -94,6 +94,9 @@ public:
 
     float analysisProgress() const noexcept { return analysisProgressValue.load(); }
     bool isRenderPending() const noexcept { return renderPending.load(); }
+    // 書き出し（オフライン処理）に使える状態か。レンダリングの要求が残っておらず、ニューラル加工を使う場合は
+    // 最新の要求に対する合成が終わっている（成功・失敗のどちらでも）。atomic だけを読むため、どのスレッドからも呼べる。
+    bool isSettled() const noexcept;
     AlignInfo alignInfo() const noexcept { return { alignState.load(), alignProgress.load() }; }
     // state == Unavailable のときの理由・状態は、呼び出し側が NeuralService から補う
     NeuralInfo neuralInfo() const;
@@ -167,6 +170,9 @@ private:
     std::atomic<std::uint64_t> latestRequestToken { 0 };
     std::atomic<float> analysisProgressValue { 0.0f };
     std::atomic<bool> renderPending { false };
+    // ニューラル加工の対象の要求（トークン。0 は対象なし）と、合成が終わった要求
+    std::atomic<std::uint64_t> neuralTargetToken { 0 };
+    std::atomic<std::uint64_t> neuralDoneToken { 0 };
 
     // レンダリング結果。published はオーディオスレッドが参照する生ポインタ（所有は clip）
     std::shared_ptr<RenderedClip> clip;

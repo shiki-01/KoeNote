@@ -79,6 +79,30 @@ public:
 
     PlaybackViews viewsForPlayback() const noexcept { return engine.viewsForPlayback(); }
 
+    //==========================================================================
+    // 任意のスレッド（atomic のみを読む）
+    // 書き出しに使える状態か。解析（includeAnalysis のとき）とレンダリング・ニューラル加工が終わっている。
+    // 解析の完了は message thread で反映されるため、message thread で書き出しを行うホストでは includeAnalysis = false にする。
+    bool isReadyForExport(bool includeAnalysis) const noexcept
+    {
+        if (! getAudioSource<KoeNoteAudioSource>()->isLoaded())
+            return false;
+
+        if (includeAnalysis)
+        {
+            // 読み込み完了の後、解析またはレンダリングの要求がまだ出ていない
+            if (! startedWithAudio.load())
+                return false;
+
+            const auto state = analysisState.load();
+
+            if (state != AnalysisState::Done && state != AnalysisState::Failed)
+                return false;
+        }
+
+        return engine.isSettled();
+    }
+
 private:
     void handleAsyncUpdate() override;
     void requestRender();
@@ -97,6 +121,8 @@ private:
 
     std::atomic<AnalysisState> analysisState { AnalysisState::WaitingForAudio };
     std::atomic<bool> startRequested { false };
+    // 元音声の読み込み後に、現在のモデルで解析・レンダリングを要求したか（書き出しの待機に使う）
+    std::atomic<bool> startedWithAudio { false };
 
     // ホストのテンポ（読み取りは負荷があるため、短時間キャッシュする）
     mutable model::TempoMap hostTempo;
