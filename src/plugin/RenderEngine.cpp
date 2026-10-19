@@ -52,6 +52,12 @@ public:
         notify();
     }
 
+    void requestGuideAnalysis()
+    {
+        guideRequested = true;
+        notify();
+    }
+
     void run() override
     {
         while (! threadShouldExit())
@@ -61,6 +67,15 @@ public:
             if (analysisRequested.exchange(false))
             {
                 owner.runAnalysis();
+                didWork = true;
+            }
+
+            if (threadShouldExit())
+                break;
+
+            if (guideRequested.exchange(false))
+            {
+                owner.runGuideAnalysis();
                 didWork = true;
             }
 
@@ -91,6 +106,7 @@ private:
     RenderEngine& owner;
     std::atomic<bool> analysisRequested { false };
     std::atomic<bool> alignRequested { false };
+    std::atomic<bool> guideRequested { false };
     std::atomic<bool> renderRequested { false };
 };
 
@@ -124,6 +140,17 @@ void RenderEngine::requestAnalysis()
     analysisProgressValue = 0.0f;
     ensureWorker();
     worker->requestAnalysis();
+}
+
+void RenderEngine::requestGuideAnalysis(std::shared_ptr<const SourceAudioData> audio)
+{
+    {
+        const std::lock_guard<std::mutex> lock(handoffMutex);
+        pendingGuideAnalysisAudio = std::move(audio);
+    }
+
+    ensureWorker();
+    worker->requestGuideAnalysis();
 }
 
 void RenderEngine::requestRender(RenderRequest request)
@@ -182,6 +209,8 @@ RenderEngine::Events RenderEngine::takeEvents()
     events.analysis = std::move(pendingAnalysisResult);
     pendingAnalysisResult.reset();
     events.alignment = std::move(pendingAlignment);
+    events.guide = std::move(pendingGuideResult);
+    pendingGuideResult.reset();
     events.analysisFailed = analysisFailedFlag;
     events.renderFinished = renderFinishedFlag;
     analysisFailedFlag = false;
@@ -289,6 +318,45 @@ void RenderEngine::runAnalysis()
     }
 
     analysisProgressValue = 1.0f;
+
+    if (wake)
+        wake();
+}
+
+// worker thread
+void RenderEngine::runGuideAnalysis()
+{
+    std::shared_ptr<const SourceAudioData> audio;
+
+    {
+        const std::lock_guard<std::mutex> lock(handoffMutex);
+        audio = std::move(pendingGuideAnalysisAudio);
+        pendingGuideAnalysisAudio.reset();
+    }
+
+    if (audio == nullptr || audio->numFrames <= 0 || audio->numChannels <= 0)
+        return;
+
+    const auto mono = toMono(*audio);
+    const analysis::MonoAudioView view { mono.data(), mono.size(), audio->sampleRate };
+
+    analysis::YinPitchAnalyzer analyzer;
+    auto track = analyzer.analyze(view, [] (float) { return ! juce::Thread::currentThreadShouldExit(); });
+
+    if (juce::Thread::currentThreadShouldExit())
+        return;
+
+    analysis::RuleBasedNoteSegmenter segmenter;
+    auto result = std::make_shared<GuideAnalysis>();
+    result->notes = track.empty() ? std::vector<model::Note> {} : segmenter.segment(track, view);
+    result->track = std::move(track);
+    result->audio = audio;
+    result->durationSec = static_cast<double>(audio->numFrames) / audio->sampleRate;
+
+    {
+        const std::lock_guard<std::mutex> lock(handoffMutex);
+        pendingGuideResult = std::move(result);
+    }
 
     if (wake)
         wake();

@@ -109,6 +109,8 @@ struct Harness
         analysisFailed = analysisFailed || events.analysisFailed;
         if (events.alignment != nullptr)
             alignment = std::move(events.alignment);
+        if (events.guide != nullptr)
+            guide = std::move(events.guide);
         if (events.renderFinished)
             ++renderFinishedCount;
     }
@@ -128,6 +130,7 @@ struct Harness
     std::optional<plugin::RenderEngine::AnalysisResult> analysis;
     bool analysisFailed = false;
     std::unique_ptr<analysis::AlignmentResult> alignment;
+    std::shared_ptr<const plugin::GuideAnalysis> guide;
     int renderFinishedCount = 0;
 };
 
@@ -423,4 +426,21 @@ TEST_CASE("整列: 負のずれ（ターゲットのほうが遅く始まる）�
     for (const auto& n : h.analysis->notes)
         if (n.startSec > 0.8)
             CHECK_THAT(h.alignment->mapTargetToGuide(n.startSec), WithinAbs(n.startSec - 0.5, 0.05));
+}
+
+TEST_CASE("ガイド: 別の音声を同じ仕組みで解析し、ノートとピッチ曲線を返す")
+{
+    Harness h(makeVoice());
+    h.engine.requestAnalysis();
+    REQUIRE(h.waitFor([&] { return h.analysis.has_value(); }));
+
+    h.engine.requestGuideAnalysis(h.source.data);
+    REQUIRE(h.waitFor([&] { return h.guide != nullptr; }));
+
+    CHECK(h.guide->audio == h.source.data);
+    CHECK_FALSE(h.guide->track.empty());
+    REQUIRE(h.guide->notes.size() == h.analysis->notes.size());
+
+    for (std::size_t i = 0; i < h.guide->notes.size(); ++i)
+        CHECK_THAT(h.guide->notes[i].startSec, WithinAbs(h.analysis->notes[i].startSec, 1.0e-6));
 }

@@ -688,14 +688,22 @@ ToolsPanel::ToolsPanel(PianoRollView& r) : SidePanel(r)
     styleEditor(offsetEditor);
     offsetEditor.setInputRestrictions(10, "0123456789.-");
     offsetEditor.setText("0.000", false);
+    offsetEditor.onReturnKey = [this] { commitGuideOffset(); };
+    offsetEditor.onFocusLost = [this] { commitGuideOffset(); };
     addAndMakeVisible(offsetEditor);
+
+    guideBox.onChange = [this]
+    {
+        if (auto* t = target(); t != nullptr && guideBox.getSelectedId() > 0)
+            t->selectGuide(guideBox.getSelectedId() - 1);
+    };
 
     offsetMinus.setButtonText("-10 ms");
     offsetPlus.setButtonText("+10 ms");
     offsetMinus.onClick = [this] { nudgeOffset(-0.010); };
     offsetPlus.onClick = [this] { nudgeOffset(0.010); };
-    offsetOnly.onClick = [this] { applyOffsetOnly(); };
-    for (auto* b : { &offsetMinus, &offsetPlus, &offsetOnly })
+    guideClear.onClick = [this] { clearGuide(); };
+    for (auto* b : { &offsetMinus, &offsetPlus, &guideClear })
         addAndMakeVisible(*b);
 
     alignGuideLabel.setColour(juce::Label::textColourId, juce::Colour(0xffd5dae3));
@@ -741,7 +749,7 @@ void ToolsPanel::updateTexts()
     alignRun.setButtonText(s.alignRun);
     alignFile.setButtonText(s.alignFile);
     offsetLabel.setText(s.alignOffset, juce::dontSendNotification);
-    offsetOnly.setButtonText(s.alignOffsetOnly);
+    guideClear.setButtonText(s.alignOffsetOnly);
     offsetHint.setText(s.alignOffsetHint, juce::dontSendNotification);
     neuralTitle.setText(s.neuralTitle, juce::dontSendNotification);
     neuralEnable.setButtonText(s.neuralEnable);
@@ -797,50 +805,48 @@ void ToolsPanel::refreshGuides()
 
     if (guideBox.indexOfItemId(previous) >= 0)
         guideBox.setSelectedId(previous, juce::dontSendNotification);
-    else if (! guides.empty())
-        guideBox.setSelectedId(guides.front().id + 1, juce::dontSendNotification);
     else
-        guideBox.setTextWhenNothingSelected(getStrings(language).alignNoGuide);
+        guideBox.setTextWhenNothingSelected(guides.empty() ? getStrings(language).alignNoGuide : getStrings(language).guideShow);
 }
 
 double ToolsPanel::currentOffset() const
 {
-    const auto text = offsetEditor.getText().trim();
-    return text.containsOnly("0123456789.-+") && text.isNotEmpty() ? std::clamp(text.getDoubleValue(), -600.0, 600.0) : 0.0;
+    const auto* t = target();
+    return t != nullptr ? t->getGuide().offsetSec : 0.0;
 }
 
 void ToolsPanel::nudgeOffset(double deltaSec)
 {
-    offsetEditor.setText(juce::String(currentOffset() + deltaSec, 3), false);
+    if (auto* t = target(); t != nullptr && t->getGuide().active)
+        t->setGuideOffset(currentOffset() + deltaSec);
 }
 
-// 整列せずに、ノート全体を「ガイド上の時刻 = クリップの時刻 + ずれ」の分だけ動かす
-void ToolsPanel::applyOffsetOnly()
+void ToolsPanel::commitGuideOffset()
 {
     auto* t = target();
-    if (t == nullptr || ! t->getModel().hasAnalysis())
+    if (t == nullptr || updating || ! t->getGuide().active)
         return;
 
-    const double offset = currentOffset();
-    std::vector<std::pair<model::NoteId, model::NoteEdit>> edits;
+    const auto text = offsetEditor.getText().trim();
+    if (text.isNotEmpty() && text.containsOnly("0123456789.-+"))
+        t->setGuideOffset(text.getDoubleValue());
+    else
+        offsetEditor.setText(juce::String(currentOffset(), 3), false);
+}
 
-    for (const auto& n : t->getModel().notes())
+void ToolsPanel::clearGuide()
+{
+    if (auto* t = target())
     {
-        auto edit = n.edit;
-        const double start = std::max(0.0, n.startSec + offset);
-        edit.targetStartSec = start;
-        edit.targetEndSec = start + (n.endSec - n.startSec);
-        edits.emplace_back(n.id, edit);
+        t->clearGuide();
+        guideBox.setSelectedId(0, juce::dontSendNotification);
     }
-
-    if (t->getModel().applyEdits(edits))
-        t->notifyEdited();
 }
 
 void ToolsPanel::runAlign()
 {
-    if (auto* t = target(); t != nullptr && guideBox.getSelectedId() > 0)
-        t->alignToGuide(guideBox.getSelectedId() - 1, currentOffset());
+    if (auto* t = target(); t != nullptr && t->getGuide().analysis != nullptr)
+        t->alignToGuide();
 }
 
 void ToolsPanel::alignFromFile()
@@ -878,7 +884,8 @@ void ToolsPanel::alignFromFile()
                              for (const auto& channel : data->channels)
                                  data->channelPointers.push_back(channel.data());
 
-                             target_->alignToGuideAudio(std::move(data), currentOffset());
+                             target_->selectGuideAudio(std::move(data), file.getFileName());
+                             guideBox.setSelectedId(0, juce::dontSendNotification);
                          });
 }
 
@@ -901,13 +908,23 @@ void ToolsPanel::refresh()
     const auto& s = getStrings(language);
 
     const bool hasModel = t != nullptr && t->getModel().hasAnalysis();
-    for (auto* c : std::initializer_list<juce::Component*> { &compareOriginal, &compareRange, &guideBox, &alignRun, &alignFile, &neuralEnable, &offsetEditor, &offsetMinus, &offsetPlus, &offsetOnly })
+    for (auto* c : std::initializer_list<juce::Component*> { &compareOriginal, &compareRange, &guideBox, &alignRun, &alignFile, &neuralEnable })
         c->setEnabled(hasModel);
 
     if (! hasModel)
         return;
 
     refreshGuides();
+
+    // ガイドの状態に合わせる（ずれの欄は、編集中でなければ現在値に追従させる）
+    const auto guide = t->getGuide();
+    for (auto* c : std::initializer_list<juce::Component*> { &offsetEditor, &offsetMinus, &offsetPlus, &guideClear })
+        c->setEnabled(guide.active);
+
+    alignRun.setEnabled(guide.analysis != nullptr);
+
+    if (! offsetEditor.hasKeyboardFocus(true))
+        offsetEditor.setText(juce::String(guide.offsetSec, 3), false);
 
     const auto compare = t->getCompare();
     compareOriginal.setToggleState(compare.useOriginal, juce::dontSendNotification);
@@ -955,7 +972,7 @@ void ToolsPanel::refresh()
 
 int ToolsPanel::getPreferredHeight() const noexcept
 {
-    return 8 + 24 + 28 * 2 + 14 + 24 + 18 + 24 + 8 + 36 + 22 + 18 + 28 + 6 + 36 + 6 + 90 + 14 + 24 + 28 + 56 + 80 + 16;
+    return 8 + 24 + 28 * 2 + 14 + 24 + 18 + 24 + 8 + 36 + 22 + 18 + 28 + 6 + 36 + 6 + 110 + 14 + 24 + 28 + 56 + 80 + 16;
 }
 
 void ToolsPanel::resized()
@@ -984,9 +1001,9 @@ void ToolsPanel::resized()
     offsetRow.removeFromLeft(4);
     offsetPlus.setBounds(offsetRow.removeFromLeft(70));
     area.removeFromTop(6);
-    offsetOnly.setBounds(area.removeFromTop(36).removeFromLeft(150).reduced(2, 0));
+    guideClear.setBounds(area.removeFromTop(36).removeFromLeft(150).reduced(2, 0));
     area.removeFromTop(6);
-    offsetHint.setBounds(area.removeFromTop(90));
+    offsetHint.setBounds(area.removeFromTop(110));
     area.removeFromTop(14);
 
     neuralTitle.setBounds(area.removeFromTop(24));

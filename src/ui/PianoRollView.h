@@ -19,7 +19,8 @@ enum class Tool
     Select,
     Split,
     Boundary,
-    Assign // MIDI の目標ノートへの手動の割り当て（F-12）
+    Assign, // MIDI の目標ノートへの手動の割り当て（F-12）
+    Guide   // 背景のガイド（リードボーカル）の開始位置をドラッグでずらす
 };
 
 using model::ScaleType;
@@ -95,7 +96,8 @@ private:
         ResizeEnd,
         Boundary,
         Rubber,
-        Pan
+        Pan,
+        Guide
     };
 
     struct DragState
@@ -106,6 +108,7 @@ private:
         std::vector<model::Note> startNotes; // ドラッグ開始時の選択ノート
         double startViewSec = 0.0;
         double startTopMidi = 0.0;
+        double startGuideOffset = 0.0;
         juce::Rectangle<int> rubber;
     };
 
@@ -134,6 +137,7 @@ private:
     void drawPlayhead(juce::Graphics& g) const;
     void drawTempoGrid(juce::Graphics& g) const;
     void drawTargets(juce::Graphics& g) const;
+    void drawGuide(juce::Graphics& g) const;
     void drawMessage(juce::Graphics& g, const juce::String& text) const;
 
     // モデル

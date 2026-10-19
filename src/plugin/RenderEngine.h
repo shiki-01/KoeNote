@@ -76,10 +76,13 @@ public:
         std::optional<AnalysisResult> analysis;
         bool analysisFailed = false;
         std::unique_ptr<analysis::AlignmentResult> alignment;
+        std::shared_ptr<const GuideAnalysis> guide; // ガイドの解析結果
         bool renderFinished = false; // 編集済みの音声（またはニューラルの結果）が更新された
     };
 
     void requestAnalysis();
+    // ガイドの音声を、このクリップと同じ方法（F0 推定・ノート分割）で解析する。結果は Events::guide。
+    void requestGuideAnalysis(std::shared_ptr<const SourceAudioData> audio);
     // 最新の要求だけが処理される。実行中のレンダリングは、新しい要求が来ると中断される。
     void requestRender(RenderRequest request);
     // startOffsetSec: ガイド上の時刻 = ターゲットの時刻 + startOffsetSec（整列の開始位置のずれ）
@@ -132,6 +135,7 @@ private:
 
     void runAnalysis();
     void runAlign();
+    void runGuideAnalysis();
     void runRender();
     void runNeural(const std::shared_ptr<const SourceAudioData>& audio,
                    const std::vector<model::Note>& notes,
@@ -154,6 +158,8 @@ private:
     std::optional<PendingRender> pendingRender;
     std::shared_ptr<const SourceAudioData> pendingGuide;
     double pendingGuideOffset = 0.0;
+    std::shared_ptr<const SourceAudioData> pendingGuideAnalysisAudio;
+    std::shared_ptr<const GuideAnalysis> pendingGuideResult;
     bool analysisFailedFlag = false;
     bool renderFinishedFlag = false;
 

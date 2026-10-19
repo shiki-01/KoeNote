@@ -130,7 +130,10 @@ worker thread が作った `RenderedClip`（編集済みの音声）は、`Proce
 
 ### 8.5 整列（F-13）
 
-`alignAudio`: MFCC（13 次）+ 対数エネルギー、帯付き DTW（Sakoe-Chiba、半径 6 秒）。ガイドは、ドキュメント内の別の AudioSource（読み込み済みのもの）、
+背景のガイド: 選択したガイドの音声を worker thread で通常の解析（YIN + ルールベース分割）にかけ、`GuideAnalysis`（ピッチ曲線・ノート・音声）として保持する（セッション内のみ、保存しない）。
+ピアノロールはガイド上の時刻 g を「g − offset」の位置に描く（ガイド上の時刻 = クリップの時刻 + offset）。offset は UI（入力欄・±10 ms・ドラッグ）で変更する。
+
+`alignAudio`（「自動で整列」ボタン。保持中のガイドと offset を使う）: MFCC（13 次）+ 対数エネルギー、帯付き DTW（Sakoe-Chiba、半径 6 秒）。ガイドは、ドキュメント内の別の AudioSource（読み込み済みのもの）、
 または音声ファイル。結果の対応表で各ノートの区間をガイドの時間へ移し、`applyEdits` で 1 回の Undo にまとめる。
 
 ### 8.6 A/B 比較（F-18）

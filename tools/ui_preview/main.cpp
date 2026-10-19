@@ -87,6 +87,10 @@ public:
     void requestReanalysis() override {}
     model::TempoMap getTempoMap() const override { return model::TempoMap::constant(120.0); }
     plugin::CompareState getCompare() const override { return compare; }
+    plugin::GuideState getGuide() const override { return guide; }
+    void setGuideOffset(double offsetSec) override { guide.offsetSec = offsetSec; sendChangeMessage(); }
+    void clearGuide() override { guide = {}; sendChangeMessage(); }
+    plugin::GuideState guide;
     void setCompare(const plugin::CompareState& s) override { compare = s; sendChangeMessage(); }
     plugin::NeuralInfo getNeuralInfo() const override { return { plugin::NeuralInfo::State::Unavailable, 0.0f, "vocoder package not found" }; }
     plugin::CompareState compare;
@@ -239,6 +243,27 @@ int main(int argc, char** argv)
         m.setTargets(imported.targets, imported.assignments);
         std::cout << "midi import: " << imported.assignments.size() << " matched, " << imported.unmatchedAnalysis << " unmatched notes, "
                   << imported.unmatchedTargets << " unmatched targets\n";
+
+        // 背景のガイド（同じ旋律を少し遅らせたもの）
+        {
+            auto analysisResult = std::make_shared<plugin::GuideAnalysis>();
+            analysisResult->track = m.pitchTrack();
+            analysisResult->notes = m.notes();
+            for (auto& n : analysisResult->notes)
+            {
+                n.startSec += 0.2;
+                n.endSec += 0.2;
+                n.detectedMidi += 1.0f;
+            }
+            analysisResult->durationSec = 7.5;
+            target.guide.active = true;
+            target.guide.name = "lead.wav";
+            target.guide.analysis = analysisResult;
+            target.guide.offsetSec = 0.12;
+            roll.setTool(ui::Tool::Guide);
+            roll.zoomToFit();
+            writePng(roll, outDir.getChildFile("preview_guide.png"));
+        }
 
         ui::BatchPanel batch(roll, [] {});
         ui::MidiPanel midiPanel(roll);

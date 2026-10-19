@@ -128,7 +128,8 @@ private:
     void applyCompare();
     void runAlign();
     void alignFromFile();
-    void applyOffsetOnly();
+    void clearGuide();
+    void commitGuideOffset();
     void nudgeOffset(double deltaSec);
     double currentOffset() const;
     void refreshGuides();
@@ -137,7 +138,7 @@ private:
 
     juce::Label compareTitle, alignTitle, alignGuideLabel, alignStatus, neuralTitle, neuralStatus, neuralHint, offsetLabel, offsetHint;
     juce::TextEditor offsetEditor;
-    juce::TextButton offsetMinus, offsetPlus, offsetOnly;
+    juce::TextButton offsetMinus, offsetPlus, guideClear;
     juce::ToggleButton compareOriginal, compareRange, neuralEnable;
     juce::ComboBox guideBox;
     juce::TextButton alignRun, alignFile;

@@ -37,6 +37,26 @@ struct GuideCandidate
     double durationSec = 0.0;
 };
 
+// ガイド（リードボーカルなど）の解析結果。ピアノロールの背景に表示し、そこに合わせて編集する。
+// 時刻はガイド自身の音声の時間軸（秒）。
+struct GuideAnalysis
+{
+    model::PitchTrack track;
+    std::vector<model::Note> notes;
+    std::shared_ptr<const SourceAudioData> audio;
+    double durationSec = 0.0;
+};
+
+struct GuideState
+{
+    bool active = false;                       // ガイドが選ばれている
+    bool analyzing = false;                    // 解析中（analysis はまだない）
+    juce::String name;
+    std::shared_ptr<const GuideAnalysis> analysis;
+    // ガイド上の時刻 = このクリップの時刻 + offsetSec。背景のガイドは、時刻 g を「g - offsetSec」の位置に描く。
+    double offsetSec = 0.0;
+};
+
 struct AlignInfo
 {
     enum class State { Idle, Working, Done, Failed };
@@ -102,10 +122,15 @@ public:
 
     // タイミング整列（F-13）。ガイドの音声との DTW で、各ノートのタイミングを合わせる。
     virtual std::vector<GuideCandidate> getGuideCandidates() const { return {}; }
-    // startOffsetSec: 「ガイド上の時刻 = このクリップの時刻 + startOffsetSec」とみなして整列を始める位置のずれ（秒）。
-    // ガイドと素材の頭がずれているとき（曲とボイスの開始位置が違う場合など）に指定する。
-    virtual void alignToGuide(int /*guideId*/, double /*startOffsetSec*/ = 0.0) {}
-    virtual void alignToGuideAudio(std::shared_ptr<const SourceAudioData> /*guide*/, double /*startOffsetSec*/ = 0.0) {}
+    // ガイドの選択（ドキュメント内の別の音声、または読み込んだ音声）。解析結果は背景に表示される。
+    virtual void selectGuide(int /*guideId*/) {}
+    virtual void selectGuideAudio(std::shared_ptr<const SourceAudioData> /*audio*/, const juce::String& /*name*/) {}
+    virtual void clearGuide() {}
+    // 背景のガイドの開始位置をずらす（ガイド上の時刻 = このクリップの時刻 + offsetSec）
+    virtual void setGuideOffset(double /*offsetSec*/) {}
+    virtual GuideState getGuide() const { return {}; }
+    // 選択中のガイドへ、現在のずれから DTW で自動整列する
+    virtual void alignToGuide() {}
     virtual AlignInfo getAlignInfo() const { return {}; }
 
     // ニューラル加工（F-17）

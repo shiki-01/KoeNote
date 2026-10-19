@@ -14,7 +14,7 @@ enum class Language
 struct Strings
 {
     // ツールバー
-    juce::String toolSelect, toolSplit, toolBoundary, toolAssign;
+    juce::String toolSelect, toolSplit, toolBoundary, toolAssign, toolGuide;
     juce::String snapOff, snapSemitone, snapScale;
     juce::String scaleMajor, scaleMinor;
     juce::String undo, redo, merge, reset, zoomFit, language, reanalyze;
@@ -41,7 +41,7 @@ struct Strings
     // その他
     juce::String compareTitle, compareOriginal, compareRange;
     juce::String alignTitle, alignGuide, alignRun, alignFile, alignNoGuide, alignWorking, alignDone, alignFailed;
-    juce::String alignOffset, alignOffsetOnly, alignOffsetHint;
+    juce::String alignOffset, alignOffsetOnly, alignOffsetHint, guideLabel, guideAnalyzing, guideShow;
     juce::String neuralTitle, neuralEnable, neuralUnavailable, neuralRendering, neuralReady, neuralFailed, neuralFolderHint, neuralWaiting;
 
     // 状態表示
@@ -49,7 +49,7 @@ struct Strings
     juce::String notARA, noClip, notes;
 
     // ヒント
-    juce::String tipSelect, tipSplit, tipBoundary, tipAssign, tipMerge, tipReset, tipReanalyze, tipAB;
+    juce::String tipSelect, tipSplit, tipBoundary, tipAssign, tipGuide, tipMerge, tipReset, tipReanalyze, tipAB;
 };
 
 const Strings& getStrings(Language language);

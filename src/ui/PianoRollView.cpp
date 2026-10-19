@@ -24,6 +24,7 @@ const juce::Colour kNoteFill { 0xff3d8bd9 };
 const juce::Colour kNoteSelected { 0xfff2b441 };
 const juce::Colour kNoteGhost { 0xff8a93a3 };
 const juce::Colour kCurve { 0xffe8ecf2 };
+const juce::Colour kGuide { 0xff35c4a8 };
 const juce::Colour kPlayhead { 0xffff5a5f };
 const juce::Colour kText { 0xffd5dae3 };
 
@@ -448,6 +449,7 @@ void PianoRollView::paint(juce::Graphics& g)
         g.saveState();
         g.reduceClipRegion(getRollArea());
         drawTempoGrid(g);
+        drawGuide(g);
         drawTargets(g);
         drawNotes(g);
         drawCurve(g);
@@ -638,6 +640,80 @@ void PianoRollView::drawRuler(juce::Graphics& g) const
         g.drawText(juce::String(minutes) + ":" + juce::String(seconds, step < 1.0 ? 2 : 0).paddedLeft('0', step < 1.0 ? 5 : 2),
                    static_cast<int>(x) + 3, 2, 60, 14, juce::Justification::centredLeft);
     }
+}
+
+// 背景のガイド（リードボーカル）。ガイド上の時刻 g を「g - offset」の位置に描く。
+void PianoRollView::drawGuide(juce::Graphics& g) const
+{
+    if (current == nullptr)
+        return;
+
+    const auto guide = current->getGuide();
+    if (! guide.active)
+        return;
+
+    const auto& s = getStrings(language);
+    const auto roll = getRollArea();
+
+    g.setFont(juce::FontOptions(11.0f));
+    g.setColour(kGuide.withAlpha(0.8f));
+    g.drawText(s.guideLabel + guide.name + (guide.analyzing ? "  " + s.guideAnalyzing : juce::String()),
+               roll.getX() + 6, roll.getY() + 4, roll.getWidth() - 12, 14, juce::Justification::centredRight);
+
+    if (guide.analysis == nullptr)
+        return;
+
+    const double offset = guide.offsetSec;
+    const float h = static_cast<float>(pixelsPerSemitone) * 0.82f;
+    const auto rollF = roll.toFloat();
+
+    for (const auto& n : guide.analysis->notes)
+    {
+        const float x0 = xOfSec(n.startSec - offset);
+        const float x1 = xOfSec(n.endSec - offset);
+        const juce::Rectangle<float> b(x0, yOfMidi(n.detectedMidi) - h * 0.5f, std::max(2.0f, x1 - x0), h);
+
+        if (! b.intersects(rollF))
+            continue;
+
+        g.setColour(kGuide.withAlpha(0.22f));
+        g.fillRoundedRectangle(b, 3.0f);
+        g.setColour(kGuide.withAlpha(0.45f));
+        g.drawRoundedRectangle(b, 3.0f, 1.0f);
+    }
+
+    const auto& track = guide.analysis->track;
+    if (track.empty())
+        return;
+
+    const double t0 = secOfX(static_cast<float>(roll.getX())) + offset - 0.05;
+    const double t1 = secOfX(static_cast<float>(roll.getRight())) + offset + 0.05;
+    const auto firstFrame = static_cast<std::size_t>(std::clamp((t0 - track.startSec) / track.hopSec, 0.0, static_cast<double>(track.size())));
+
+    juce::Path path;
+    bool open = false;
+
+    for (std::size_t i = firstFrame; i < track.size() && track.timeOf(i) <= t1; ++i)
+    {
+        if (! track.isVoiced(i))
+        {
+            open = false;
+            continue;
+        }
+
+        const float x = xOfSec(track.timeOf(i) - offset);
+        const float y = yOfMidi(toMidi(track.f0Hz[i]));
+
+        if (! open)
+            path.startNewSubPath(x, y);
+        else
+            path.lineTo(x, y);
+
+        open = true;
+    }
+
+    g.setColour(kGuide.withAlpha(0.5f));
+    g.strokePath(path, juce::PathStrokeType(1.0f));
 }
 
 void PianoRollView::drawNotes(juce::Graphics& g) const
@@ -939,6 +1015,12 @@ void PianoRollView::mouseMove(const juce::MouseEvent& e)
         return;
     }
 
+    if (tool == Tool::Guide)
+    {
+        setMouseCursor(juce::MouseCursor::LeftRightResizeCursor);
+        return;
+    }
+
     if (tool == Tool::Boundary)
     {
         model::NoteId id = 0;
@@ -982,6 +1064,17 @@ void PianoRollView::mouseDown(const juce::MouseEvent& e)
 
     if (! getRollArea().contains(e.getPosition()))
         return;
+
+    if (tool == Tool::Guide)
+    {
+        if (current != nullptr && current->getGuide().active)
+        {
+            drag.kind = DragKind::Guide;
+            drag.startGuideOffset = current->getGuide().offsetSec;
+        }
+
+        return;
+    }
 
     if (tool == Tool::Split)
     {
@@ -1199,6 +1292,16 @@ void PianoRollView::mouseDrag(const juce::MouseEvent& e)
 
             break;
         }
+
+        case DragKind::Guide:
+            if (current != nullptr)
+            {
+                // 右へ動かすとガイドが右へ動く = ずれが減る。1 ms 単位にそろえる。
+                const double dx = static_cast<double>(e.x - drag.startPoint.x) / pixelsPerSec;
+                current->setGuideOffset(std::round((drag.startGuideOffset - dx) * 1000.0) / 1000.0);
+            }
+
+            break;
 
         case DragKind::None: break;
 

@@ -62,8 +62,12 @@ public:
     CompareState getCompare() const override { return engine.getCompare(); }
 
     std::vector<GuideCandidate> getGuideCandidates() const override;
-    void alignToGuide(int guideId, double startOffsetSec) override;
-    void alignToGuideAudio(std::shared_ptr<const SourceAudioData> guide, double startOffsetSec) override;
+    void selectGuide(int guideId) override;
+    void selectGuideAudio(std::shared_ptr<const SourceAudioData> audio, const juce::String& name) override;
+    void clearGuide() override;
+    void setGuideOffset(double offsetSec) override;
+    GuideState getGuide() const override;
+    void alignToGuide() override;
     AlignInfo getAlignInfo() const override { return engine.alignInfo(); }
 
     NeuralInfo getNeuralInfo() const override;
@@ -83,6 +87,12 @@ private:
 
     model::EditModel model;
     RenderEngine engine;
+
+    // ガイド（message thread のみ）
+    std::shared_ptr<const SourceAudioData> guideAudio;
+    std::shared_ptr<const GuideAnalysis> guideAnalysis;
+    juce::String guideName;
+    double guideOffset = 0.0;
 
     std::atomic<AnalysisState> analysisState { AnalysisState::WaitingForAudio };
     std::atomic<bool> startRequested { false };

@@ -4,6 +4,7 @@
 #include "plugin/NeuralService.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace koenote::plugin
 {
@@ -198,7 +199,7 @@ std::vector<GuideCandidate> KoeNoteAudioModification::getGuideCandidates() const
     return candidates;
 }
 
-void KoeNoteAudioModification::alignToGuide(int guideId, double startOffsetSec)
+void KoeNoteAudioModification::selectGuide(int guideId)
 {
     int index = 0;
 
@@ -206,22 +207,62 @@ void KoeNoteAudioModification::alignToGuide(int guideId, double startOffsetSec)
     {
         if (index++ == guideId)
         {
-            alignToGuideAudio(source->sharedAudio(), startOffsetSec);
+            const char* name = source->getName();
+            selectGuideAudio(source->sharedAudio(),
+                             (name != nullptr && *name != 0) ? juce::String::fromUTF8(name) : "Audio " + juce::String(guideId + 1));
             return;
         }
     }
 }
 
-void KoeNoteAudioModification::alignToGuideAudio(std::shared_ptr<const SourceAudioData> guide, double startOffsetSec)
+void KoeNoteAudioModification::selectGuideAudio(std::shared_ptr<const SourceAudioData> audio, const juce::String& name)
 {
-    if (guide == nullptr || ! model.hasAnalysis() || getSourceAudio() == nullptr)
+    if (audio == nullptr)
+        return;
+
+    // 解析（F0 推定・ノート分割）は、このクリップと同じ仕組みで worker thread が行う
+    guideAudio = audio;
+    guideAnalysis.reset();
+    guideName = name;
+    engine.requestGuideAnalysis(std::move(audio));
+    sendChangeMessage();
+}
+
+void KoeNoteAudioModification::clearGuide()
+{
+    guideAudio.reset();
+    guideAnalysis.reset();
+    guideName = {};
+    sendChangeMessage();
+}
+
+void KoeNoteAudioModification::setGuideOffset(double offsetSec)
+{
+    guideOffset = std::isfinite(offsetSec) ? std::clamp(offsetSec, -600.0, 600.0) : 0.0;
+    sendChangeMessage();
+}
+
+GuideState KoeNoteAudioModification::getGuide() const
+{
+    GuideState s;
+    s.active = guideAudio != nullptr;
+    s.analyzing = s.active && guideAnalysis == nullptr;
+    s.name = guideName;
+    s.analysis = guideAnalysis;
+    s.offsetSec = guideOffset;
+    return s;
+}
+
+void KoeNoteAudioModification::alignToGuide()
+{
+    if (guideAudio == nullptr || ! model.hasAnalysis() || getSourceAudio() == nullptr)
     {
         engine.markAlignFailed();
         sendChangeMessage();
         return;
     }
 
-    engine.requestAlign(std::move(guide), startOffsetSec);
+    engine.requestAlign(guideAudio, guideOffset);
     sendChangeMessage();
 }
 
@@ -306,6 +347,13 @@ void KoeNoteAudioModification::handleAsyncUpdate()
     if (events.alignment != nullptr)
     {
         applyAlignment(*events.alignment);
+        sendChangeMessage();
+    }
+
+    // ガイドの解析結果（解析中に別のガイドが選ばれた場合は捨てる）
+    if (events.guide != nullptr && events.guide->audio == guideAudio)
+    {
+        guideAnalysis = std::move(events.guide);
         sendChangeMessage();
     }
 
