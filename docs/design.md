@@ -122,7 +122,8 @@ worker thread が作った `RenderedClip`（編集済みの音声）は、`Proce
 
 ### 8.4 テンポ・グリッド・一括補正・キー（F-14・F-15・F-16）
 
-- `TempoMap`（秒 ↔ 四分音符の区分線形）。ARA では、リージョンの MusicalContext から `kARAContentTypeTempoEntries` を読む（1 秒ごとにキャッシュ）。
+- `TempoMap`（秒 ↔ 四分音符の区分線形）。ARA では、リージョンの MusicalContext から `kARAContentTypeTempoEntries` と `kARAContentTypeBarSignatures`（拍子）を読む（1 秒ごとにキャッシュ）。
+  拍子は ARA の規則どおり、最初の拍子の位置を小節 1 とし、最初の拍子をそれより前にも適用する（`TempoMap::meterAt`・`barsBetween`）。MIDI の書き出しにはクリップの位置の拍子を書く。
   ホストが提供しなければ、手動 BPM の一定テンポ。UI のグリッド線（拍・小節）と、クオンタイズが同じ表を使う。
 - `computeBatchEdits`: ピッチは検出値からスナップした音へ strength の割合だけ寄せる（スナップ: なし／半音／スケール）、ビブラートの保持、
   タイミングはグリッドへ寄せる（長さを保つ／終了位置も寄せる）。

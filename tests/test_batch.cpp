@@ -73,6 +73,82 @@ TEST_CASE("テンポ変化のある TempoMap")
     CHECK_THAT(t.bpmAt(2.5), WithinAbs(240.0, 1e-6));
 }
 
+TEST_CASE("拍子がなければ quarter = 0 からの 4/4 として数える")
+{
+    const auto t = TempoMap::constant(120.0);
+
+    const auto a = t.meterAt(0.0);
+    CHECK(a.bar == 1);
+    CHECK(a.beat == 1);
+    CHECK(a.onBar);
+
+    const auto b = t.meterAt(5.0); // 2 小節目の 2 拍目
+    CHECK(b.bar == 2);
+    CHECK(b.beat == 2);
+    CHECK(b.onBeat);
+    CHECK_FALSE(b.onBar);
+
+    CHECK_FALSE(t.meterAt(5.5).onBeat);
+    CHECK(t.meterAt(-4.0).bar == 0);
+
+    const auto bars = t.barsBetween(0.0, 12.0);
+    REQUIRE(bars.size() == 4);
+    CHECK_THAT(bars[3].quarter, WithinAbs(12.0, 1e-9));
+    CHECK(bars[3].bar == 4);
+}
+
+TEST_CASE("拍子の変化（3/4 → 6/8 → 7/8）と小節番号")
+{
+    auto t = TempoMap::constant(120.0);
+    // 最初の拍子の位置が小節 1（ARA の規則）
+    t.setBarSignatures({ { 2.0, 3, 4 }, { 8.0, 6, 8 }, { 14.0, 7, 8 } });
+    REQUIRE(t.barSignatures().size() == 3);
+
+    // 3/4: 2〜8 は 2 小節（小節 1・2）
+    CHECK(t.meterAt(2.0).bar == 1);
+    CHECK(t.meterAt(5.0).bar == 2);
+    CHECK(t.meterAt(5.0).onBar);
+    CHECK(t.meterAt(7.0).beat == 3);
+    // 最初の拍子より前にも適用される
+    CHECK(t.meterAt(-1.0).bar == 0);
+    CHECK(t.meterAt(-1.0).onBar);
+
+    // 6/8: 拍は八分音符。8〜14 は 2 小節（小節 3・4）
+    CHECK(t.meterAt(8.0).bar == 3);
+    CHECK(t.meterAt(8.5).beat == 2);
+    CHECK(t.meterAt(8.5).onBeat);
+    CHECK(t.meterAt(11.0).bar == 4);
+    CHECK_THAT(t.beatLengthAt(9.0), WithinAbs(0.5, 1e-9));
+    CHECK_THAT(t.barLengthAt(9.0), WithinAbs(3.0, 1e-9));
+
+    // 7/8: 小節の長さは 3.5 四分音符
+    CHECK(t.meterAt(14.0).bar == 5);
+    CHECK(t.meterAt(17.5).bar == 6);
+    CHECK(t.meterAt(17.5).onBar);
+
+    const auto bars = t.barsBetween(0.0, 21.0);
+    std::vector<double> expected { 2.0, 5.0, 8.0, 11.0, 14.0, 17.5, 21.0 };
+    REQUIRE(bars.size() == expected.size());
+    for (std::size_t i = 0; i < bars.size(); ++i)
+    {
+        CHECK_THAT(bars[i].quarter, WithinAbs(expected[i], 1e-9));
+        CHECK(bars[i].bar == static_cast<long long>(i) + 1);
+    }
+
+    const auto beats = t.beatsBetween(14.0, 15.0);
+    REQUIRE(beats.size() == 3); // 14.0, 14.5, 15.0
+    CHECK(beats[2].beat == 3);
+    CHECK(beats[2].bar == 5);
+}
+
+TEST_CASE("不正な拍子は捨てる")
+{
+    auto t = TempoMap::constant(120.0);
+    t.setBarSignatures({ { 0.0, 0, 4 }, { 1.0, 4, 3 }, { 2.0, 5, 4 }, { 1.0, 3, 4 } });
+    REQUIRE(t.barSignatures().size() == 1);
+    CHECK(t.barSignatures()[0].numerator == 5);
+}
+
 TEST_CASE("不正な TempoMap は無効になる")
 {
     CHECK_FALSE(TempoMap().valid());

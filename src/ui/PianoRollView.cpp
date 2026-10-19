@@ -660,34 +660,46 @@ void PianoRollView::drawRuler(juce::Graphics& g) const
 
     if (tempo.valid())
     {
-        // 小節・拍の目盛り（4/4 拍子として数える。ホストのテンポ情報の位置を小節 1 拍 1 とする）
+        // 小節・拍の目盛り（ホストの拍子に従う。拍子がなければ 4/4）
         const double q0 = tempo.secToQuarter(secOfX(static_cast<float>(area.getX())) + timeOffset);
         const double q1 = tempo.secToQuarter(secOfX(static_cast<float>(area.getRight())) + timeOffset);
+        const auto pixelsOf = [&] (double quarters) { return (tempo.quarterToSec(q0 + quarters) - tempo.quarterToSec(q0)) * pixelsPerSec; };
 
-        double stepQ = 0.25;
-        for (const double candidate : { 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0 })
+        const auto drawTick = [&] (const model::TempoMap::GridPosition& p, bool label)
         {
-            stepQ = candidate;
-            if ((tempo.quarterToSec(q0 + candidate) - tempo.quarterToSec(q0)) * pixelsPerSec >= 56.0)
-                break;
-        }
-
-        for (double q = std::ceil(q0 / stepQ) * stepQ; q <= q1; q += stepQ)
-        {
-            const float x = xOfSec(tempo.quarterToSec(q) - timeOffset);
-            const bool onBeat = std::abs(q - std::round(q)) < 1.0e-6;
-            const long long beatIndex = std::llround(std::floor(q + 1.0e-6));
-            const long long bar = (beatIndex >= 0 ? beatIndex / 4 : -((-beatIndex + 3) / 4)) + 1;
-            const long long beat = ((beatIndex % 4) + 4) % 4 + 1;
-
+            const float x = xOfSec(tempo.quarterToSec(p.quarter) - timeOffset);
             g.setColour(kOctaveLine);
-            g.drawVerticalLine(static_cast<int>(x), static_cast<float>(area.getBottom() - (onBeat && beat == 1 ? 12 : 8)), static_cast<float>(area.getBottom()));
+            g.drawVerticalLine(static_cast<int>(x), static_cast<float>(area.getBottom() - (p.beat == 1 ? 12 : 8)), static_cast<float>(area.getBottom()));
 
-            if (onBeat)
+            if (label)
             {
                 g.setColour(kText);
-                g.drawText(beat == 1 ? juce::String(bar) : juce::String(bar) + "." + juce::String(beat),
+                g.drawText(p.beat == 1 ? juce::String(p.bar) : juce::String(p.bar) + "." + juce::String(p.beat),
                            static_cast<int>(x) + 3, 2, 60, 14, juce::Justification::centredLeft);
+            }
+        };
+
+        if (pixelsOf(tempo.beatLengthAt(q0)) >= 56.0)
+        {
+            // 拍ごとに番号を付ける
+            for (const auto& p : tempo.beatsBetween(q0, q1))
+                drawTick(p, true);
+        }
+        else
+        {
+            // 小節ごと（ズームが小さいほど、番号を付ける小節を間引く）
+            long long every = 1;
+            const double barPixels = pixelsOf(tempo.barLengthAt(q0));
+
+            while (every < 1024 && barPixels * static_cast<double>(every) < 56.0)
+                every *= 2;
+
+            for (const auto& p : tempo.barsBetween(q0, q1))
+            {
+                const bool label = ((p.bar - 1) % every + every) % every == 0;
+
+                if (label || barPixels >= 8.0)
+                    drawTick(p, label);
             }
         }
 
@@ -924,17 +936,34 @@ void PianoRollView::drawTempoGrid(juce::Graphics& g) const
         grid *= 2.0;
 
     const double first = std::ceil(q0 / grid) * grid;
+    const auto lineAt = [&] (double q, juce::Colour colour)
+    {
+        g.setColour(colour);
+        g.drawVerticalLine(static_cast<int>(xOfSec(tempo.quarterToSec(q) - timeOffset)), static_cast<float>(roll.getY()), static_cast<float>(roll.getBottom()));
+    };
 
+    const auto barColour = juce::Colour(0xff6f7a8c).withAlpha(0.55f);
+    const bool separateBars = (tempo.quarterToSec(q0 + tempo.barLengthAt(q0)) - tempo.quarterToSec(q0)) * pixelsPerSec >= 8.0;
+
+    // グリッド（クオンタイズの単位）と拍。小節の先頭は拍子によってはグリッドに乗らない（7/8 など）ため、別に描く。
     for (double q = first; q <= q1 && q - first < 4000.0 * grid; q += grid)
     {
-        const double sec = tempo.quarterToSec(q) - timeOffset;
-        const float x = xOfSec(sec);
-        const bool beat = std::abs(q - std::round(q)) < 1.0e-6;
-        const bool bar = beat && std::abs(std::fmod(std::round(q), 4.0)) < 1.0e-6;
+        const auto meter = tempo.meterAt(q);
 
-        g.setColour(bar ? juce::Colour(0xff6f7a8c).withAlpha(0.55f) : (beat ? juce::Colour(0xff505a6b).withAlpha(0.45f) : juce::Colour(0xff3c4452).withAlpha(0.35f)));
-        g.drawVerticalLine(static_cast<int>(x), static_cast<float>(roll.getY()), static_cast<float>(roll.getBottom()));
+        if (meter.onBar)
+        {
+            if (! separateBars)
+                lineAt(q, barColour);
+        }
+        else
+        {
+            lineAt(q, meter.onBeat ? juce::Colour(0xff505a6b).withAlpha(0.45f) : juce::Colour(0xff3c4452).withAlpha(0.35f));
+        }
     }
+
+    if (separateBars)
+        for (const auto& bar : tempo.barsBetween(q0, q1))
+            lineAt(bar.quarter, barColour);
 }
 
 juce::Rectangle<float> PianoRollView::targetBounds(const model::TargetNote& t) const

@@ -85,7 +85,13 @@ public:
     const model::EditModel& getModel() const noexcept override { return model; }
     void notifyEdited() override { ++notifications; sendChangeMessage(); }
     void requestReanalysis() override {}
-    model::TempoMap getTempoMap() const override { return model::TempoMap::constant(120.0); }
+    model::TempoMap getTempoMap() const override
+    {
+        // 拍子の表示の確認用に、途中で 3/4 へ変える
+        auto tempo = model::TempoMap::constant(120.0);
+        tempo.setBarSignatures({ { 0.0, 4, 4 }, { 8.0, 3, 4 } });
+        return tempo;
+    }
     plugin::CompareState getCompare() const override { return compare; }
     plugin::GuideState getGuide() const override { return guide; }
     void setGuideOffset(double offsetSec) override { guide.offsetSec = offsetSec; sendChangeMessage(); }

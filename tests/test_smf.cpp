@@ -135,6 +135,22 @@ TEST_CASE("テンポ変更を含む往復でも秒が保たれる")
     CHECK(std::abs(seq->tempos[1].bpm - 60.0) < 0.01);
 }
 
+TEST_CASE("拍子のメタイベントは指定した拍子で書かれ、不正な値は 4/4 になる")
+{
+    const auto contains = [] (const std::vector<std::uint8_t>& smf, const std::vector<std::uint8_t>& pattern)
+    {
+        return std::search(smf.begin(), smf.end(), pattern.begin(), pattern.end()) != smf.end();
+    };
+
+    SmfWriteOptions options;
+    options.timeSignatureNumerator = 6;
+    options.timeSignatureDenominator = 8;
+    CHECK(contains(writeSmf({}, options), { 0xFF, 0x58, 0x04, 0x06, 0x03, 0x18, 0x08 }));
+
+    options.timeSignatureDenominator = 6; // 2 の累乗ではない
+    CHECK(contains(writeSmf({}, options), { 0xFF, 0x58, 0x04, 0x04, 0x02, 0x18, 0x08 }));
+}
+
 TEST_CASE("SMF のヘッダとトラック終端のバイト列が規定どおりになる")
 {
     const auto bytes = writeSmf({ { 0.0, 0.5, 60, 100 } });

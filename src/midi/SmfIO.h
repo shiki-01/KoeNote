@@ -47,6 +47,8 @@ struct SmfWriteOptions
     double pitchBendRangeSemitones = 2.0;  // ±range が ±8191 に対応
     double pitchBendIntervalSec = 0.02;    // 間引き間隔（同じ値が続くときは出力しない）
     std::string trackName = "KoeNote";
+    int timeSignatureNumerator = 4;   // 先頭の拍子（1..255）
+    int timeSignatureDenominator = 4; // 2 の累乗（1..128）。不正な値は 4/4 にする
 };
 
 // SMF（format 0、単一トラック）を書き出す。

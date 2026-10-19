@@ -509,6 +509,17 @@ bool MidiPanel::writeSmfTo(const juce::File& file)
         const double offset = t->getTimeOffsetSec();
         options.tempos.push_back({ 0.0, std::clamp(tempo.bpmAt(offset), 20.0, 400.0) });
 
+        // クリップの位置の拍子
+        const double startQuarter = tempo.secToQuarter(offset);
+        for (const auto& s : tempo.barSignatures())
+        {
+            if (s.quarter > startQuarter + 1.0e-6 && &s != &tempo.barSignatures().front())
+                break;
+
+            options.timeSignatureNumerator = s.numerator;
+            options.timeSignatureDenominator = s.denominator;
+        }
+
         const auto& entries = tempo.entries();
         for (std::size_t i = 0; i + 1 < entries.size(); ++i)
         {

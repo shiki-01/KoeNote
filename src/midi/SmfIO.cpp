@@ -251,7 +251,24 @@ std::vector<std::uint8_t> writeSmf(const std::vector<MidiNote>& notes, const Smf
     for (const char c : options.trackName)
         nameBytes.push_back(static_cast<std::uint8_t>(c));
     events.push_back({ 0, kCategoryMeta, 0, metaEvent(0x03, nameBytes) });
-    events.push_back({ 0, kCategoryMeta, 0, metaEvent(0x58, { 0x04, 0x02, 0x18, 0x08 }) });
+    {
+        // 拍子（分母は 2 の累乗の指数で書く）
+        int numerator = options.timeSignatureNumerator;
+        int denominator = options.timeSignatureDenominator;
+        const bool validDenominator = denominator >= 1 && denominator <= 128 && (denominator & (denominator - 1)) == 0;
+
+        if (numerator < 1 || numerator > 255 || ! validDenominator)
+        {
+            numerator = 4;
+            denominator = 4;
+        }
+
+        std::uint8_t exponent = 0;
+        while ((1 << exponent) < denominator)
+            ++exponent;
+
+        events.push_back({ 0, kCategoryMeta, 0, metaEvent(0x58, { static_cast<std::uint8_t>(numerator), exponent, 0x18, 0x08 }) });
+    }
 
     // tempo 変化（先頭区間以外）
     for (std::size_t i = 1; i < segments.size(); ++i)

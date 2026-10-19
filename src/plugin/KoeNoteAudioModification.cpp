@@ -139,7 +139,26 @@ model::TempoMap KoeNoteAudioModification::readHostTempo() const
         entries.push_back({ e.timePosition, e.quarterPosition });
     }
 
-    return model::TempoMap(std::move(entries));
+    model::TempoMap tempo(std::move(entries));
+
+    // 拍子（kARAContentTypeBarSignatures）。提供されなければ 4/4。
+    ARA::PlugIn::HostContentReader<ARA::kARAContentTypeBarSignatures> barReader(context);
+
+    if (barReader)
+    {
+        std::vector<model::TempoMap::BarSignature> signatures;
+        signatures.reserve(static_cast<std::size_t>(barReader.getEventCount()));
+
+        for (ARA::ARAInt32 i = 0; i < barReader.getEventCount(); ++i)
+        {
+            const auto e = barReader[i];
+            signatures.push_back({ e.position, static_cast<int>(e.numerator), static_cast<int>(e.denominator) });
+        }
+
+        tempo.setBarSignatures(std::move(signatures));
+    }
+
+    return tempo;
 }
 
 model::TempoMap KoeNoteAudioModification::getTempoMap() const
