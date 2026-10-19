@@ -147,7 +147,7 @@ bool KoeNotePlaybackRenderer::processBlock(juce::AudioBuffer<float>& buffer,
             }
             else
             {
-                // 元音声とプロジェクトのサンプルレートが異なる場合は、線形補間で変換する（簡易的なフォールバック）
+                // 元音声とプロジェクトのサンプルレートが異なる場合は、窓付き sinc で変換する
                 const double step = audio.sampleRate / sampleRate;
                 const double startPosition = (modificationStartSec + static_cast<double>(from) / sampleRate) * audio.sampleRate;
 
