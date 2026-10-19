@@ -1507,6 +1507,16 @@ void PianoRollView::mouseUp(const juce::MouseEvent& e)
     if (drag.kind == DragKind::Playhead)
         seekTo(secOfX(static_cast<float>(e.x)), true);
 
+    if (drag.kind == DragKind::RangeNew)
+    {
+        // 範囲の外をクリック（ドラッグなし）したら、範囲を解除する
+        double lo = 0.0, hi = 0.0;
+        const bool moved = std::abs(e.x - drag.startPoint.x) >= 4 || std::abs(e.y - drag.startPoint.y) >= 4;
+
+        if (! moved && getTimingRange(lo, hi) && (drag.rangeFixedSec < lo || drag.rangeFixedSec > hi))
+            clearTimingRange();
+    }
+
     if (drag.kind == DragKind::RangeNew || drag.kind == DragKind::RangeStart || drag.kind == DragKind::RangeEnd)
         notifyModelEdited(true);
 
