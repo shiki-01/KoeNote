@@ -42,6 +42,23 @@ jobs:
           name: KoeNote-vst3-windows-x64
           path: build/src/plugin/KoeNote_artefacts/Release/VST3/KoeNote.vst3
 
+      # インストーラーの定義（installer/KoeNote.iss）が壊れていないことを、リリース前に確認する
+      - name: Build installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --no-progress -y
+          }
+          & $iscc "/DAppVersion=0.0.0-ci" "/DSourceRoot=$PWD" "/DVst3Dir=$PWD\build\src\plugin\KoeNote_artefacts\Release\VST3\KoeNote.vst3" "/O$PWD\dist" installer\KoeNote.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC が失敗しました" }
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: KoeNote-installer-windows-x64
+          path: dist/*.exe
+
       - name: Upload pluginval logs
         if: always()
         uses: actions/upload-artifact@v4

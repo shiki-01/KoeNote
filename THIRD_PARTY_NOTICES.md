@@ -63,3 +63,10 @@ VST は Steinberg Media Technologies GmbH の登録商標です。
 
 モデルの重みは同梱していません。ニューラル加工（F-17）は、利用者が任意で配置したボコーダー（例: DiffSinger Community Vocoder の PC-NSF-HiFiGAN、CC BY-NC-SA 4.0）を読み込みます。モデルを同梱する場合は、ここにモデル名・配布元・ライセンスを追記します。
 非商用条件付きの重み（例: PC-NSF-HiFiGAN の公開重み、CC BY-NC-SA 4.0）は本体に同梱せず、利用者が任意で追加する方式とします。
+
+## Inno Setup（インストーラーの作成のみ）
+
+- 用途: Windows インストーラーの作成（`installer/KoeNote.iss`）。インストーラーには Inno Setup のセットアップ用プログラムが含まれる。
+- 著作権: Copyright (C) 1997-2025 Jordan Russell, Martijn Laan
+- ライセンス: Inno Setup License（作成したインストーラーの配布は無償・商用とも可）
+- https://jrsoftware.org/isinfo.php

@@ -89,7 +89,7 @@ worker thread が作った `RenderedClip`（編集済みの音声）は、`Proce
 ## 7. UI 層
 
 `PianoRollView` は出力時間軸（編集後）で、ノートのブロック、編集後のピッチ曲線、元音声の波形（時間軸に合わせて変形）、
-再生位置を描く。操作は `docs/dev-setup.md` の 4.3 を参照。ARA の選択（`ARAEditorView::Listener`）に追従して
+再生位置を描く。操作は `docs/user-guide.md` の 4章を参照。ARA の選択（`ARAEditorView::Listener`）に追従して
 編集対象の AudioModification を切り替える。選択に時間の範囲があれば、その範囲を表示する（`PianoRollView::showTimeRange`）。ARA に依存する部分は `EditTarget`（抽象）で分離しており、
 `tools/ui_preview` で ARA ホストなしに PNG を出力して見た目を確認できる。
 

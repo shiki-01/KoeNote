@@ -10,7 +10,7 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 option(KOENOTE_BUILD_PLUGIN "VST3 プラグイン本体をビルドする" ON)
 option(KOENOTE_BUILD_TESTS "Catch2 単体テストをビルドする" ON)
 option(KOENOTE_BUILD_TOOLS "UI プレビューなどの開発用ツールをビルドする" ON)
-set(KOENOTE_WEBSITE "https://koenote.invalid/" CACHE STRING "ARA ファクトリの informationURL（空は不可）。公開時に実際のリポジトリ URL へ変更する")
+set(KOENOTE_WEBSITE "https://github.com/shiki-01/KoeNote" CACHE STRING "ARA ファクトリの informationURL・プラグインの会社サイト（空は不可）")
 option(KOENOTE_COPY_PLUGIN "ビルド後に VST3 をユーザーの VST3 フォルダへコピーする" OFF)
 
 # 依存ライブラリは external/ 以下の git submodule（JUCE 8.0.x、ARA SDK 2.3、Catch2 3.x）

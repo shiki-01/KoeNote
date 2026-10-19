@@ -1,0 +1,72 @@
+name: Release
+
+# v で始まるタグ（例: v0.1.0）を push すると、ビルド・テストの後に zip とインストーラーを作り、
+# GitHub Releases に下書き（draft）として置く。内容を確認してから、GitHub の画面で公開する。
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout (submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Check version
+        id: version
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = $tag.TrimStart('v')
+          # CMakeLists.txt の project(... VERSION x.y.z) とタグを一致させる
+          $cmake = Get-Content CMakeLists.txt -Raw
+          if ($cmake -notmatch 'project\(KoeNote VERSION ([0-9.]+)') { throw "CMakeLists.txt のバージョンが読めません" }
+          if ($Matches[1] -ne $version) { throw "タグ ($version) と CMakeLists.txt のバージョン ($($Matches[1])) が一致しません" }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Configure
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Unit tests (Catch2)
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Package (zip)
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $stage = "dist/KoeNote-$version-windows-x64"
+          New-Item -ItemType Directory -Force "$stage/docs" | Out-Null
+          Copy-Item -Recurse build/src/plugin/KoeNote_artefacts/Release/VST3/KoeNote.vst3 "$stage/"
+          Copy-Item LICENSE "$stage/LICENSE.txt"
+          Copy-Item THIRD_PARTY_NOTICES.md, README.md "$stage/"
+          Copy-Item docs/user-guide.md, docs/neural-setup.md "$stage/docs/"
+          Compress-Archive -Path "$stage/*" -DestinationPath "dist/KoeNote-$version-windows-x64.zip"
+
+      - name: Build installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --no-progress -y
+          }
+          & $iscc "/DAppVersion=$version" "/DSourceRoot=$PWD" "/DVst3Dir=$PWD\build\src\plugin\KoeNote_artefacts\Release\VST3\KoeNote.vst3" "/O$PWD\dist" installer\KoeNote.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC が失敗しました" }
+
+      - name: Create draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          gh release create "${{ github.ref_name }}" --draft --title "KoeNote $version" --generate-notes `
+            "dist/KoeNote-$version-windows-x64.zip" "dist/KoeNote-$version-windows-x64-setup.exe"

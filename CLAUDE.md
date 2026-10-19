@@ -53,7 +53,7 @@ Melodyne 型のノート単位ボーカル編集プラグイン。ARA2 対応 VS
 - 学習済みモデルの重み・`onnxruntime.dll` はリポジトリ・配布物に含めない（`.gitignore`）。ニューラル加工は利用者が配置したものを読み込む（非商用条件付きの重みがあるため）。
 - 保存形式は現在 v3（v1・v2 も読める）。保存形式（`kEditModelFormatVersion`）を変えるときは、旧バージョンの読み込みを残し、旧バージョンの固定バイト列のテストを足す（v1 のテストが目安）。
 - 新しいライブラリ・モデルは採用前にライセンスを確認する（GPL 系は AGPLv3 と整合する場合のみ）。
-- `KOENOTE_WEBSITE`（ARA の informationURL。空は不可）は仮の値。公開時に実際の URL へ変更する。
+- `KOENOTE_WEBSITE`（ARA の informationURL。空は不可）は GitHub のリポジトリ URL。配布は GitHub Releases のみ（専用サイトなし）。リリース手順は docs/dev-setup.md の 10 章。
 
 ## ビルド・テスト
 

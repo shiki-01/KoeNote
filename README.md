@@ -20,10 +20,15 @@ ARA2（Audio Random Access）対応の VST3 として実装しています。
 | ニューラル加工（任意。[セットアップ](docs/neural-setup.md)）、A/B 比較・バイパス（F-17・F-18） | 実装済み |
 | 非 ARA 環境のキャプチャモード、歌詞・音素表示、ARA 経由のノート提供、macOS 対応など（F-19〜F-21） | フェーズ3 |
 
+## ダウンロードと使い方
+
+[Releases](https://github.com/shiki-01/KoeNote/releases) から、インストーラー（`*-setup.exe`）または zip をダウンロードします。
+インストール、DAW での割り当て、操作方法は [使い方](docs/user-guide.md) を参照してください。
+
 ## ビルド
 
 ```bash
-git clone --recursive <このリポジトリの URL>
+git clone --recursive https://github.com/shiki-01/KoeNote.git
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64
 cmake --build build --config Release --parallel
 ctest --test-dir build -C Release --output-on-failure
@@ -34,6 +39,7 @@ ctest --test-dir build -C Release --output-on-failure
 
 ## ドキュメント
 
+- [使い方（利用者向け）](docs/user-guide.md)
 - [要件定義書](docs/requirements.md)
 - [設計メモ](docs/design.md)
 - [開発環境と動作確認の手順](docs/dev-setup.md)
