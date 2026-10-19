@@ -20,7 +20,8 @@ enum class Tool
     Split,
     Boundary,
     Assign, // MIDI の目標ノートへの手動の割り当て（F-12）
-    Guide   // 背景のガイド（リードボーカル）の開始位置をドラッグでずらす
+    Guide,  // 背景のガイド（リードボーカル）の開始位置をドラッグでずらす
+    Range   // タイミング編集の範囲を指定する（範囲の外は動かさない）
 };
 
 using model::ScaleType;
@@ -47,8 +48,15 @@ public:
     Tool getTool() const noexcept { return tool; }
     void setSnap(SnapMode mode, int rootPitchClass, ScaleType scale);
 
-    // 再生位置（出力時間軸の秒）。負の値で非表示。
+    // 再生位置（出力時間軸の秒）。負の値で再生中でないことを表す（直前の位置にカーソルを残す）。
     void setPlayhead(double seconds);
+    // 再生位置の変更をホストへ依頼する（定規のクリック・ドラッグ、再生位置の線のドラッグ）。引数は出力時間軸の秒。
+    std::function<void(double)> onSeek;
+
+    // タイミング編集の範囲（範囲の外は動かさない）
+    bool hasTimingRange() const;
+    void clearTimingRange();
+    bool getTimingRange(double& startSec, double& endSec) const;
 
     const std::set<model::NoteId>& getSelection() const noexcept { return selection; }
     std::function<void()> onSelectionChanged;
@@ -97,7 +105,11 @@ private:
         Boundary,
         Rubber,
         Pan,
-        Guide
+        Guide,
+        Playhead,
+        RangeNew,
+        RangeStart,
+        RangeEnd
     };
 
     struct DragState
@@ -109,6 +121,7 @@ private:
         double startViewSec = 0.0;
         double startTopMidi = 0.0;
         double startGuideOffset = 0.0;
+        double rangeFixedSec = 0.0; // 範囲をドラッグしているときの、動かさない側の端（または新規範囲の起点）
         juce::Rectangle<int> rubber;
     };
 
@@ -138,6 +151,11 @@ private:
     void drawTempoGrid(juce::Graphics& g) const;
     void drawTargets(juce::Graphics& g) const;
     void drawGuide(juce::Graphics& g) const;
+    void drawRange(juce::Graphics& g) const;
+    void seekTo(double sec, bool force);
+    double displayedPlayheadSec() const noexcept { return playheadSec >= 0.0 ? playheadSec : cursorSec; }
+    bool hitTestPlayhead(juce::Point<float> p) const;
+    void setTimingRange(double a, double b);
     void drawMessage(juce::Graphics& g, const juce::String& text) const;
 
     // モデル
@@ -170,6 +188,8 @@ private:
     std::set<model::NoteId> selection;
     DragState drag;
     double playheadSec = -1.0;
+    double cursorSec = -1.0; // 再生していないときに表示する位置（最後の再生位置、またはシークした位置）
+    std::uint32_t lastSeekAtMs = 0;
     double hoverSec = 0.0;
     bool pendingNotify = false;
     bool editGestureOpen = false;

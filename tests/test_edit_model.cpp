@@ -401,13 +401,13 @@ TEST_CASE("v1 から読み込んだモデルを保存し直すと、v2 として
     REQUIRE(restored.has_value());
 
     const auto v2 = restored->serialize();
-    CHECK(v2[4] == 2);
+    CHECK(v2[4] == kEditModelFormatVersion);
     const auto again = EditModel::deserialize(v2.data(), v2.size());
     REQUIRE(again.has_value());
     CHECK(again->notes()[0].edit.pitchOffsetCents == 150.0f);
 }
 
-TEST_CASE("v2 の保存サイズ（固定）")
+TEST_CASE("v3 の保存サイズ（固定）と、v2 データの読み込み")
 {
     EditModel m;
     PitchTrack t;
@@ -416,8 +416,33 @@ TEST_CASE("v2 の保存サイズ（固定）")
     t.voicing = { 1.0f };
     m.setAnalysis(t, { makeNote(1.0, 2.0, 60.0f) });
 
-    // ヘッダ 17 + トラック 32 + ノート数 8 + ノート 88 + 目標数 8 + 割り当て数 8 + 設定 9
-    CHECK(m.serialize().size() == 17 + 32 + 8 + 88 + 8 + 8 + 9);
+    // ヘッダ 17 + トラック 32 + ノート数 8 + ノート 88 + 目標数 8 + 割り当て数 8 + 設定 9 + 範囲 17
+    auto bytes = m.serialize();
+    CHECK(bytes.size() == 17 + 32 + 8 + 88 + 8 + 8 + 9 + 17);
+
+    // 範囲の 17 バイトを除いてバージョンを 2 にすると、v2 のデータになる
+    bytes.resize(bytes.size() - 17);
+    bytes[4] = 2;
+    const auto v2 = EditModel::deserialize(bytes.data(), bytes.size());
+    REQUIRE(v2.has_value());
+    CHECK_FALSE(v2->settings().timingRangeActive);
+}
+
+TEST_CASE("タイミング編集の範囲は保存・復元できる")
+{
+    auto m = makeModel();
+    auto s = m.settings();
+    s.timingRangeActive = true;
+    s.timingRangeStartSec = 1.5;
+    s.timingRangeEndSec = 4.25;
+    m.setSettings(s);
+
+    const auto bytes = m.serialize();
+    const auto restored = EditModel::deserialize(bytes.data(), bytes.size());
+    REQUIRE(restored.has_value());
+    CHECK(restored->settings().timingRangeActive);
+    CHECK(restored->settings().timingRangeStartSec == 1.5);
+    CHECK(restored->settings().timingRangeEndSec == 4.25);
 }
 
 TEST_CASE("フェーズ2 の編集項目（ゲイン・フォルマント・子音・ブレス）は保存・復元できる")

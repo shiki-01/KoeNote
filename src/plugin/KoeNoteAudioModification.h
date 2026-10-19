@@ -93,6 +93,7 @@ private:
     std::shared_ptr<const GuideAnalysis> guideAnalysis;
     juce::String guideName;
     double guideOffset = 0.0;
+    double alignOffsetUsed = 0.0; // 実行中の整列が使うずれ
 
     std::atomic<AnalysisState> analysisState { AnalysisState::WaitingForAudio };
     std::atomic<bool> startRequested { false };

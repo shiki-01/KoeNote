@@ -27,7 +27,7 @@ KoeNoteEditor::KoeNoteEditor(plugin::KoeNoteProcessor& processor)
       midiPanel(roll),
       toolsPanel(roll)
 {
-    for (auto* b : { &selectButton, &splitButton, &boundaryButton, &assignButton, &guideButton })
+    for (auto* b : { &selectButton, &splitButton, &boundaryButton, &assignButton, &guideButton, &rangeButton })
     {
         styleToggle(*b);
         addAndMakeVisible(*b);
@@ -44,6 +44,7 @@ KoeNoteEditor::KoeNoteEditor(plugin::KoeNoteProcessor& processor)
     boundaryButton.onClick = [this] { roll.setTool(Tool::Boundary); };
     assignButton.onClick = [this] { roll.setTool(Tool::Assign); };
     guideButton.onClick = [this] { roll.setTool(Tool::Guide); };
+    rangeButton.onClick = [this] { roll.setTool(Tool::Range); };
     undoButton.onClick = [this] { roll.undo(); };
     redoButton.onClick = [this] { roll.redo(); };
     mergeButton.onClick = [this] { roll.mergeSelected(); };
@@ -111,6 +112,20 @@ KoeNoteEditor::KoeNoteEditor(plugin::KoeNoteProcessor& processor)
 
     roll.onSelectionChanged = [this] { noteParams.refresh(); refreshPanels(); updateStatus(); };
     roll.onModelChanged = [this] { noteParams.refresh(); refreshPanels(); updateStatus(); };
+    // 再生位置の変更（定規のクリック・ドラッグなど）。ARA のホストが再生コントローラーを提供している場合だけ、ホストの再生位置を動かす。
+    roll.onSeek = [this] (double outSec)
+    {
+        if (currentRegion == nullptr)
+            return;
+
+        const double project = outSec - currentRegion->getStartInAudioModificationTime() + currentRegion->getStartInPlaybackTime();
+
+        if (auto* sequence = currentRegion->getRegionSequence())
+            if (auto* document = sequence->getDocument())
+                if (auto* controller = document->getDocumentController())
+                    if (auto* playback = controller->getHostPlaybackController())
+                        playback->requestSetPlaybackPosition(std::max(0.0, project));
+    };
 
     addAndMakeVisible(roll);
 
@@ -146,6 +161,7 @@ void KoeNoteEditor::applyLanguage()
     boundaryButton.setButtonText(s.toolBoundary);
     assignButton.setButtonText(s.toolAssign);
     guideButton.setButtonText(s.toolGuide);
+    rangeButton.setButtonText(s.toolRange);
     undoButton.setButtonText(s.undo);
     redoButton.setButtonText(s.redo);
     mergeButton.setButtonText(s.merge);
@@ -160,6 +176,7 @@ void KoeNoteEditor::applyLanguage()
     boundaryButton.setTooltip(s.tipBoundary);
     assignButton.setTooltip(s.tipAssign);
     guideButton.setTooltip(s.tipGuide);
+    rangeButton.setTooltip(s.tipRange);
     mergeButton.setTooltip(s.tipMerge);
     resetButton.setTooltip(s.tipReset);
     reanalyzeButton.setTooltip(s.tipReanalyze);
@@ -276,7 +293,7 @@ void KoeNoteEditor::resized()
 
     if (! isARAEditorView())
     {
-        for (auto* c : std::initializer_list<juce::Component*> { &selectButton, &splitButton, &boundaryButton, &assignButton, &guideButton, &undoButton, &redoButton,
+        for (auto* c : std::initializer_list<juce::Component*> { &selectButton, &splitButton, &boundaryButton, &assignButton, &guideButton, &rangeButton, &undoButton, &redoButton,
                                                                  &mergeButton, &resetButton, &abButton, &fitButton, &reanalyzeButton, &languageButton,
                                                                  &snapBox, &rootBox, &scaleBox, &statusLabel, &roll, &tabs })
             c->setVisible(false);
@@ -288,7 +305,7 @@ void KoeNoteEditor::resized()
     statusLabel.setBounds(area.removeFromBottom(kStatusHeight).reduced(8, 2));
 
     // 1 段目: ツール、スナップ、言語
-    for (auto* b : { &selectButton, &splitButton, &boundaryButton, &assignButton, &guideButton })
+    for (auto* b : { &selectButton, &splitButton, &boundaryButton, &assignButton, &guideButton, &rangeButton })
         b->setBounds(row1.removeFromLeft(72).reduced(1, 0));
 
     row1.removeFromLeft(12);

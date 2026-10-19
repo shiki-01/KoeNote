@@ -18,7 +18,7 @@ TimeMap::TimeMap(std::vector<Anchor> anchorsIn) : anchors(std::move(anchorsIn))
     }
 }
 
-TimeMap TimeMap::fromNotes(const std::vector<model::Note>& notes, double consonantSec)
+TimeMap TimeMap::fromNotes(const std::vector<model::Note>& notes, double consonantSec, const Pins& pins)
 {
     std::vector<Anchor> a;
 
@@ -47,6 +47,20 @@ TimeMap TimeMap::fromNotes(const std::vector<model::Note>& notes, double consona
 
         a.push_back({ n.outStartSec(), n.startSec });
         a.push_back({ n.outEndSec(), n.endSec });
+    }
+
+    if (pins.active && pins.endSec > pins.startSec)
+    {
+        // 範囲の中のアンカーだけを使い、出力時刻も範囲内に収める。両端は恒等に固定する。
+        std::vector<Anchor> pinned;
+        pinned.push_back({ pins.startSec, pins.startSec });
+
+        for (const auto& anchor : a)
+            if (anchor.srcSec > pins.startSec && anchor.srcSec < pins.endSec)
+                pinned.push_back({ std::clamp(anchor.outSec, pins.startSec, pins.endSec), anchor.srcSec });
+
+        pinned.push_back({ pins.endSec, pins.endSec });
+        return TimeMap(std::move(pinned));
     }
 
     return TimeMap(std::move(a));

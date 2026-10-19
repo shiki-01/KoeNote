@@ -85,7 +85,7 @@ RenderedAudio renderEditedAudio(const RenderInput& input, const RenderProgress& 
     if (marks.empty())
         return result;
 
-    const auto timeMap = TimeMap::fromNotes(notes);
+    const auto timeMap = TimeMap::fromNotes(notes, 0.06, input.pins);
     const auto adjust = computePitchAdjustCents(track, notes);
     const auto formant = computeFormantShiftCents(track, notes, adjust);
 

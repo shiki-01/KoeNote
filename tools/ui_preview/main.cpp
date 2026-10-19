@@ -265,6 +265,19 @@ int main(int argc, char** argv)
             writePng(roll, outDir.getChildFile("preview_guide.png"));
         }
 
+        // タイミング編集の範囲
+        {
+            auto s = m.settings();
+            s.timingRangeActive = true;
+            s.timingRangeStartSec = 1.2;
+            s.timingRangeEndSec = 3.4;
+            m.setSettings(s);
+            roll.setTool(ui::Tool::Range);
+            roll.setPlayhead(2.0);
+            roll.zoomToFit();
+            writePng(roll, outDir.getChildFile("preview_range.png"));
+        }
+
         ui::BatchPanel batch(roll, [] {});
         ui::MidiPanel midiPanel(roll);
         ui::ToolsPanel tools(roll);

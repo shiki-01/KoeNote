@@ -2,6 +2,7 @@
 
 #include "model/Note.h"
 #include "model/PitchTrack.h"
+#include "render/TimeMap.h"
 
 #include <cstdint>
 #include <functional>
@@ -18,6 +19,7 @@ struct RenderInput
     double sampleRate = 0.0;
     const model::PitchTrack* track = nullptr;
     const std::vector<model::Note>* notes = nullptr;
+    TimeMap::Pins pins; // タイミング編集の範囲の固定
 };
 
 // レンダリング結果。出力時間軸（元音声の先頭 = 0）の音声。

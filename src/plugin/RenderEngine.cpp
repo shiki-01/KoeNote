@@ -457,6 +457,7 @@ void RenderEngine::runRender()
         input.sampleRate = audio->sampleRate;
         input.track = &request.track;
         input.notes = &request.notes;
+        input.pins = render::TimeMap::Pins::from(request.settings);
 
         auto rendered = render::renderEditedAudio(input, [this, token] (float)
         {
@@ -493,7 +494,7 @@ void RenderEngine::runRender()
     // 高品質のニューラル加工（F-17）。先に TD-PSOLA の結果が再生されるため、音切れは出ない。
     if (request.settings.renderMode == 1 && audible)
     {
-        runNeural(audio, request.notes, request.track, token, request.revision);
+        runNeural(audio, request.notes, request.track, render::TimeMap::Pins::from(request.settings), token, request.revision);
     }
     else
     {
@@ -506,6 +507,7 @@ void RenderEngine::runRender()
 void RenderEngine::runNeural(const std::shared_ptr<const SourceAudioData>& audio,
                              const std::vector<model::Note>& notes,
                              const model::PitchTrack& track,
+                             const render::TimeMap::Pins& pins,
                              std::uint64_t token,
                              std::uint64_t revision)
 {
@@ -550,6 +552,7 @@ void RenderEngine::runNeural(const std::shared_ptr<const SourceAudioData>& audio
     input.sampleRate = audio->sampleRate;
     input.track = &track;
     input.notes = &notes;
+    input.pins = pins;
 
     auto rendered = neural::renderNeural(input, *vocoder, [&] (float p)
     {

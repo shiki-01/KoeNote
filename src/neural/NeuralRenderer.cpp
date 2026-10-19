@@ -264,7 +264,7 @@ render::RenderedAudio renderNeural(const render::RenderInput& input,
         return result;
 
     // 3. 出力時間軸のフレーム列（時間伸縮・フォルマント・ピッチ）
-    const auto timeMap = render::TimeMap::fromNotes(notes);
+    const auto timeMap = render::TimeMap::fromNotes(notes, 0.06, input.pins);
     const auto adjust = render::computePitchAdjustCents(track, notes);
     const auto formant = render::computeFormantShiftCents(track, notes, adjust);
 

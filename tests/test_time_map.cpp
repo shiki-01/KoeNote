@@ -93,3 +93,23 @@ TEST_CASE("toOutput は toSource の逆写像になる")
     for (const double out : { 0.5, 1.3, 2.0, 2.6, 3.4, 4.8 })
         CHECK_THAT(map.toOutput(map.toSource(out)), WithinAbs(out, 1e-9));
 }
+
+TEST_CASE("範囲を固定すると、範囲の外は動かず、範囲の中だけが伸縮する")
+{
+    auto a = note(2.0, 3.0);
+    a.edit.targetStartSec = 2.5;
+    a.edit.targetEndSec = 3.5;
+    auto b = note(8.0, 9.0);
+
+    // 範囲 [1, 5]: a は範囲内で 0.5 秒遅らせる。b は範囲の外にある（タイミング編集は無視される）。
+    render::TimeMap::Pins pins { true, 1.0, 5.0 };
+    const auto map = render::TimeMap::fromNotes({ a, b }, 0.06, pins);
+
+    CHECK_THAT(map.toSource(0.5), WithinAbs(0.5, 1e-9));
+    CHECK_THAT(map.toSource(1.0), WithinAbs(1.0, 1e-9));
+    CHECK_THAT(map.toSource(2.5), WithinAbs(2.0, 1e-9));
+    CHECK_THAT(map.toSource(3.5), WithinAbs(3.0, 1e-9));
+    CHECK_THAT(map.toSource(5.0), WithinAbs(5.0, 1e-9));
+    CHECK_THAT(map.toSource(8.0), WithinAbs(8.0, 1e-9));
+    CHECK_THAT(map.toSource(8.7), WithinAbs(8.7, 1e-9));
+}

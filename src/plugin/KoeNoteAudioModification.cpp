@@ -262,6 +262,7 @@ void KoeNoteAudioModification::alignToGuide()
         return;
     }
 
+    alignOffsetUsed = guideOffset;
     engine.requestAlign(guideAudio, guideOffset);
     sendChangeMessage();
 }
@@ -274,14 +275,22 @@ void KoeNoteAudioModification::applyAlignment(const analysis::AlignmentResult& r
         return;
     }
 
-    // 各ノートの区間を、ガイド上の対応する時刻へ移す（出力時間軸 = ガイドの時間）
+    // 各ノートの区間を、ガイド上の対応する時刻へ移す。背景のガイドは「ガイド上の時刻 g を g - offset の位置」に描くので、
+    // 出力時間軸の位置は「ガイド上の時刻 - offset」になる。タイミング編集の範囲があるときは、範囲内のノートだけを範囲内へ動かす。
+    const auto& settings = model.settings();
+    const bool ranged = settings.timingRangeActive && settings.timingRangeEndSec > settings.timingRangeStartSec;
+    const double lo = ranged ? settings.timingRangeStartSec : 0.0;
+    const double hi = ranged ? settings.timingRangeEndSec : 1.0e9;
     std::vector<std::pair<model::NoteId, model::NoteEdit>> edits;
 
     for (const auto& note : model.notes())
     {
+        if (ranged && (0.5 * (note.startSec + note.endSec) < lo || 0.5 * (note.startSec + note.endSec) > hi))
+            continue;
+
         auto edit = note.edit;
-        const double start = std::max(0.0, result.mapTargetToGuide(note.startSec));
-        const double end = std::max(start + model::EditModel::kMinNoteDurationSec, result.mapTargetToGuide(note.endSec));
+        const double start = std::clamp(result.mapTargetToGuide(note.startSec) - alignOffsetUsed, lo, hi - model::EditModel::kMinNoteDurationSec);
+        const double end = std::clamp(result.mapTargetToGuide(note.endSec) - alignOffsetUsed, start + model::EditModel::kMinNoteDurationSec, hi);
         edit.targetStartSec = start;
         edit.targetEndSec = end;
         edits.emplace_back(note.id, edit);

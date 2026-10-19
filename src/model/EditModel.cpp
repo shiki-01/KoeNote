@@ -526,7 +526,9 @@ bool EditModel::clearTargets()
 void EditModel::setSettings(const ModelSettings& s)
 {
     if (s.renderMode == modelSettings.renderMode && s.snapMode == modelSettings.snapMode && s.keyRoot == modelSettings.keyRoot
-        && s.keyMinor == modelSettings.keyMinor && s.gridDivision == modelSettings.gridDivision && s.manualBpm == modelSettings.manualBpm)
+        && s.keyMinor == modelSettings.keyMinor && s.gridDivision == modelSettings.gridDivision && s.manualBpm == modelSettings.manualBpm
+        && s.timingRangeActive == modelSettings.timingRangeActive && s.timingRangeStartSec == modelSettings.timingRangeStartSec
+        && s.timingRangeEndSec == modelSettings.timingRangeEndSec)
         return;
 
     modelSettings = s;
@@ -600,6 +602,9 @@ std::vector<std::uint8_t> EditModel::serialize() const
     w.writeU8(modelSettings.keyMinor);
     w.writeU8(modelSettings.gridDivision);
     w.writeF32(modelSettings.manualBpm);
+    w.writeU8(modelSettings.timingRangeActive ? 1 : 0);
+    w.writeF64(modelSettings.timingRangeStartSec);
+    w.writeF64(modelSettings.timingRangeEndSec);
 
     return w.release();
 }
@@ -680,10 +685,18 @@ std::optional<EditModel> EditModel::deserialize(const std::uint8_t* data, std::s
         m.modelSettings.gridDivision = r.readU8();
         m.modelSettings.manualBpm = r.readF32();
 
+        if (version >= 3)
+        {
+            m.modelSettings.timingRangeActive = r.readU8() != 0;
+            m.modelSettings.timingRangeStartSec = r.readF64();
+            m.modelSettings.timingRangeEndSec = r.readF64();
+        }
+
         // 設定値の範囲を検査する（壊れたデータで UI が不正な状態にならないように）
         auto& s = m.modelSettings;
         if (s.renderMode > 1 || s.snapMode > 2 || s.keyRoot > 11 || s.keyMinor > 1 || s.gridDivision > 3 || ! std::isfinite(s.manualBpm)
-            || s.manualBpm < 0.0f || s.manualBpm > 999.0f)
+            || s.manualBpm < 0.0f || s.manualBpm > 999.0f || ! std::isfinite(s.timingRangeStartSec) || ! std::isfinite(s.timingRangeEndSec)
+            || (s.timingRangeActive && ! (s.timingRangeStartSec >= 0.0 && s.timingRangeEndSec > s.timingRangeStartSec)))
             s = ModelSettings {};
     }
 

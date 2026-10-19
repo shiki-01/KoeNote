@@ -136,6 +136,8 @@ private:
     void toggleNeural();
     void updateTexts();
 
+    juce::Label rangeTitle, rangeStatus;
+    juce::TextButton rangeClear;
     juce::Label compareTitle, alignTitle, alignGuideLabel, alignStatus, neuralTitle, neuralStatus, neuralHint, offsetLabel, offsetHint;
     juce::TextEditor offsetEditor;
     juce::TextButton offsetMinus, offsetPlus, guideClear;

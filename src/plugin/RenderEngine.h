@@ -140,6 +140,7 @@ private:
     void runNeural(const std::shared_ptr<const SourceAudioData>& audio,
                    const std::vector<model::Note>& notes,
                    const model::PitchTrack& track,
+                   const render::TimeMap::Pins& pins,
                    std::uint64_t token,
                    std::uint64_t revision);
     void publishClip(std::shared_ptr<RenderedClip> clip, std::uint64_t revision);

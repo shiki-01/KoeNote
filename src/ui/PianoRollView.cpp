@@ -25,6 +25,7 @@ const juce::Colour kNoteSelected { 0xfff2b441 };
 const juce::Colour kNoteGhost { 0xff8a93a3 };
 const juce::Colour kCurve { 0xffe8ecf2 };
 const juce::Colour kGuide { 0xff35c4a8 };
+const juce::Colour kRange { 0xffe08a3c };
 const juce::Colour kPlayhead { 0xffff5a5f };
 const juce::Colour kText { 0xffd5dae3 };
 
@@ -108,11 +109,86 @@ void PianoRollView::setSnap(SnapMode mode, int rootPitchClass, ScaleType scale)
 
 void PianoRollView::setPlayhead(double seconds)
 {
+    if (seconds >= 0.0)
+        cursorSec = seconds;
+
     if (std::abs(seconds - playheadSec) > 1.0e-4)
     {
         playheadSec = seconds;
         repaint();
     }
+}
+
+// 再生位置の変更を依頼する。ドラッグ中は、ホストへの依頼を約 40 ms ごとに間引く。
+void PianoRollView::seekTo(double sec, bool force)
+{
+    sec = std::max(0.0, sec);
+    cursorSec = sec;
+    repaint();
+
+    const auto now = juce::Time::getMillisecondCounter();
+    if (! force && now - lastSeekAtMs < 40)
+        return;
+
+    lastSeekAtMs = now;
+
+    if (onSeek)
+        onSeek(sec);
+}
+
+bool PianoRollView::hitTestPlayhead(juce::Point<float> p) const
+{
+    const double sec = displayedPlayheadSec();
+    return sec >= 0.0 && getRollArea().toFloat().contains(p) && std::abs(p.x - xOfSec(sec)) <= 4.0f;
+}
+
+bool PianoRollView::hasTimingRange() const
+{
+    const auto* m = model();
+    return m != nullptr && m->settings().timingRangeActive;
+}
+
+bool PianoRollView::getTimingRange(double& startSec, double& endSec) const
+{
+    const auto* m = model();
+    if (m == nullptr || ! m->settings().timingRangeActive)
+        return false;
+
+    startSec = m->settings().timingRangeStartSec;
+    endSec = m->settings().timingRangeEndSec;
+    return true;
+}
+
+void PianoRollView::setTimingRange(double a, double b)
+{
+    auto* m = model();
+    if (m == nullptr)
+        return;
+
+    const double lo = std::max(0.0, std::min(a, b));
+    const double hi = std::max(a, b);
+
+    if (hi - lo < 0.05)
+        return;
+
+    auto s = m->settings();
+    s.timingRangeActive = true;
+    s.timingRangeStartSec = lo;
+    s.timingRangeEndSec = hi;
+    m->setSettings(s);
+    notifyModelEdited(false);
+}
+
+void PianoRollView::clearTimingRange()
+{
+    auto* m = model();
+    if (m == nullptr || ! m->settings().timingRangeActive)
+        return;
+
+    auto s = m->settings();
+    s.timingRangeActive = false;
+    m->setSettings(s);
+    notifyModelEdited(true);
 }
 
 model::EditModel* PianoRollView::model() const
@@ -283,7 +359,7 @@ void PianoRollView::refreshCaches()
     cachedRevision = m->revision();
     cacheValid = true;
 
-    timeMap = render::TimeMap::fromNotes(m->notes());
+    timeMap = render::TimeMap::fromNotes(m->notes(), 0.06, render::TimeMap::Pins::from(m->settings()));
 
     const auto& track = m->pitchTrack();
     const auto adjust = render::computePitchAdjustCents(track, m->notes());
@@ -453,6 +529,7 @@ void PianoRollView::paint(juce::Graphics& g)
         drawTargets(g);
         drawNotes(g);
         drawCurve(g);
+        drawRange(g);
         drawPlayhead(g);
         g.restoreState();
     }
@@ -920,12 +997,56 @@ void PianoRollView::drawTargets(juce::Graphics& g) const
     }
 }
 
-void PianoRollView::drawPlayhead(juce::Graphics& g) const
+// タイミング編集の範囲。範囲の外は暗くして「動かない」ことを示し、範囲の中でタイミングを変えたノートに印を付ける。
+void PianoRollView::drawRange(juce::Graphics& g) const
 {
-    if (playheadSec < 0.0)
+    double a = 0.0, b = 0.0;
+    if (! getTimingRange(a, b))
         return;
 
-    const float x = xOfSec(playheadSec);
+    const auto roll = getRollArea();
+    const float x0 = xOfSec(a);
+    const float x1 = xOfSec(b);
+    const float top = static_cast<float>(roll.getY());
+    const float bottom = static_cast<float>(roll.getBottom());
+
+    g.setColour(juce::Colours::black.withAlpha(0.38f));
+    g.fillRect(juce::Rectangle<float>(static_cast<float>(roll.getX()), top, std::max(0.0f, x0 - roll.getX()), bottom - top));
+    g.fillRect(juce::Rectangle<float>(x1, top, std::max(0.0f, static_cast<float>(roll.getRight()) - x1), bottom - top));
+
+    g.setColour(kRange.withAlpha(0.07f));
+    g.fillRect(juce::Rectangle<float>(x0, top, std::max(0.0f, x1 - x0), bottom - top));
+
+    g.setColour(kRange.withAlpha(0.9f));
+    g.drawVerticalLine(static_cast<int>(x0), top, bottom);
+    g.drawVerticalLine(static_cast<int>(x1), top, bottom);
+    g.fillRect(juce::Rectangle<float>(x0, top, std::max(0.0f, x1 - x0), 3.0f));
+
+    g.setFont(juce::FontOptions(11.0f));
+    g.drawText(getStrings(language).rangeLabel, static_cast<int>(x0) + 6, roll.getY() + 5, 120, 14, juce::Justification::centredLeft);
+
+    // 範囲の中でタイミングを変えたノートに、上辺の印を付ける
+    if (const auto* m = model())
+    {
+        for (const auto& n : m->notes())
+        {
+            if (! n.edit.hasTimingEdit() || n.startSec < a || n.endSec > b)
+                continue;
+
+            const auto nb = noteBounds(n);
+            g.setColour(kRange);
+            g.fillRect(juce::Rectangle<float>(nb.getX(), nb.getY() - 4.0f, nb.getWidth(), 3.0f));
+        }
+    }
+}
+
+void PianoRollView::drawPlayhead(juce::Graphics& g) const
+{
+    const double displaySec = displayedPlayheadSec();
+    if (displaySec < 0.0)
+        return;
+
+    const float x = xOfSec(displaySec);
     const auto roll = getRollArea();
 
     if (x >= roll.getX() && x <= roll.getRight())
@@ -1015,9 +1136,23 @@ void PianoRollView::mouseMove(const juce::MouseEvent& e)
         return;
     }
 
+    if (hitTestPlayhead(e.position) || getRulerArea().contains(e.getPosition()))
+    {
+        setMouseCursor(juce::MouseCursor::LeftRightResizeCursor);
+        return;
+    }
+
     if (tool == Tool::Guide)
     {
         setMouseCursor(juce::MouseCursor::LeftRightResizeCursor);
+        return;
+    }
+
+    if (tool == Tool::Range)
+    {
+        double a = 0.0, b = 0.0;
+        const bool nearEdge = getTimingRange(a, b) && (std::abs(e.position.x - xOfSec(a)) <= 6.0f || std::abs(e.position.x - xOfSec(b)) <= 6.0f);
+        setMouseCursor(nearEdge ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::CrosshairCursor);
         return;
     }
 
@@ -1062,8 +1197,39 @@ void PianoRollView::mouseDown(const juce::MouseEvent& e)
         return;
     }
 
+    // 定規のクリック・ドラッグ、再生位置の線のドラッグで、再生位置を変える
+    if (getRulerArea().contains(e.getPosition()) || hitTestPlayhead(e.position))
+    {
+        drag.kind = DragKind::Playhead;
+        seekTo(secOfX(e.position.x), true);
+        return;
+    }
+
     if (! getRollArea().contains(e.getPosition()))
         return;
+
+    if (tool == Tool::Range)
+    {
+        double a = 0.0, b = 0.0;
+
+        if (getTimingRange(a, b) && std::abs(e.position.x - xOfSec(a)) <= 6.0f)
+        {
+            drag.kind = DragKind::RangeStart;
+            drag.rangeFixedSec = b;
+        }
+        else if (getTimingRange(a, b) && std::abs(e.position.x - xOfSec(b)) <= 6.0f)
+        {
+            drag.kind = DragKind::RangeEnd;
+            drag.rangeFixedSec = a;
+        }
+        else
+        {
+            drag.kind = DragKind::RangeNew;
+            drag.rangeFixedSec = secOfX(e.position.x);
+        }
+
+        return;
+    }
 
     if (tool == Tool::Guide)
     {
@@ -1216,11 +1382,19 @@ void PianoRollView::applyDrag(const juce::MouseEvent& e)
                 return dxSec > 0.0 ? a.startSec > b.startSec : a.startSec < b.startSec;
             });
 
+            double lo = 0.0, hi = 1.0e9;
+            const bool ranged = getTimingRange(lo, hi);
+
             for (const auto& n : notes)
             {
-                const double start = std::max(0.0, n.outStartSec() + dxSec);
-                const double end = start + (n.outEndSec() - n.outStartSec());
-                m->setNoteTiming(n.id, start, end);
+                const double length = n.outEndSec() - n.outStartSec();
+
+                // 範囲があるとき、範囲の外のノートは動かさず、動かすノートは範囲の中に収める
+                if (ranged && (n.outStartSec() < lo - 1.0e-6 || n.outEndSec() > hi + 1.0e-6))
+                    continue;
+
+                const double start = std::clamp(n.outStartSec() + dxSec, lo, std::max(lo, hi - length));
+                m->setNoteTiming(n.id, start, start + length);
             }
 
             break;
@@ -1236,11 +1410,16 @@ void PianoRollView::applyDrag(const juce::MouseEvent& e)
 
                 double start = n.outStartSec();
                 double end = n.outEndSec();
+                double lo = 0.0, hi = 1.0e9;
+                const bool ranged = getTimingRange(lo, hi);
+
+                if (ranged && (start < lo - 1.0e-6 || end > hi + 1.0e-6))
+                    continue;
 
                 if (drag.kind == DragKind::ResizeStart)
-                    start = std::clamp(start + dxSec, 0.0, end - model::EditModel::kMinNoteDurationSec);
+                    start = std::clamp(start + dxSec, lo, end - model::EditModel::kMinNoteDurationSec);
                 else
-                    end = std::max(end + dxSec, start + model::EditModel::kMinNoteDurationSec);
+                    end = std::clamp(end + dxSec, start + model::EditModel::kMinNoteDurationSec, hi);
 
                 m->setNoteTiming(n.id, start, end);
             }
@@ -1250,7 +1429,11 @@ void PianoRollView::applyDrag(const juce::MouseEvent& e)
 
         case DragKind::Boundary:
         {
-            const double srcSec = timeMap.toSource(secOfX(static_cast<float>(e.x)));
+            double srcSec = timeMap.toSource(secOfX(static_cast<float>(e.x)));
+            double lo = 0.0, hi = 0.0;
+            if (getTimingRange(lo, hi))
+                srcSec = std::clamp(srcSec, lo, hi);
+
             m->moveBoundary(drag.primary, srcSec);
             break;
         }
@@ -1293,6 +1476,16 @@ void PianoRollView::mouseDrag(const juce::MouseEvent& e)
             break;
         }
 
+        case DragKind::Playhead:
+            seekTo(secOfX(static_cast<float>(e.x)), false);
+            break;
+
+        case DragKind::RangeNew:
+        case DragKind::RangeStart:
+        case DragKind::RangeEnd:
+            setTimingRange(drag.rangeFixedSec, secOfX(static_cast<float>(e.x)));
+            break;
+
         case DragKind::Guide:
             if (current != nullptr)
             {
@@ -1309,8 +1502,14 @@ void PianoRollView::mouseDrag(const juce::MouseEvent& e)
     }
 }
 
-void PianoRollView::mouseUp(const juce::MouseEvent&)
+void PianoRollView::mouseUp(const juce::MouseEvent& e)
 {
+    if (drag.kind == DragKind::Playhead)
+        seekTo(secOfX(static_cast<float>(e.x)), true);
+
+    if (drag.kind == DragKind::RangeNew || drag.kind == DragKind::RangeStart || drag.kind == DragKind::RangeEnd)
+        notifyModelEdited(true);
+
     if (editGestureOpen)
     {
         if (auto* m = model())

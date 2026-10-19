@@ -669,13 +669,13 @@ ToolsPanel::ToolsPanel(PianoRollView& r) : SidePanel(r)
 {
     language = detectDefaultLanguage();
 
-    for (auto* l : { &compareTitle, &alignTitle, &neuralTitle })
+    for (auto* l : { &compareTitle, &alignTitle, &neuralTitle, &rangeTitle })
     {
         styleSectionLabel(*l);
         addAndMakeVisible(*l);
     }
 
-    for (auto* l : { &alignStatus, &neuralStatus, &neuralHint, &offsetHint })
+    for (auto* l : { &alignStatus, &neuralStatus, &neuralHint, &offsetHint, &rangeStatus })
     {
         styleHint(*l);
         addAndMakeVisible(*l);
@@ -703,6 +703,8 @@ ToolsPanel::ToolsPanel(PianoRollView& r) : SidePanel(r)
     offsetMinus.onClick = [this] { nudgeOffset(-0.010); };
     offsetPlus.onClick = [this] { nudgeOffset(0.010); };
     guideClear.onClick = [this] { clearGuide(); };
+    rangeClear.onClick = [this] { roll.clearTimingRange(); };
+    addAndMakeVisible(rangeClear);
     for (auto* b : { &offsetMinus, &offsetPlus, &guideClear })
         addAndMakeVisible(*b);
 
@@ -745,6 +747,8 @@ void ToolsPanel::updateTexts()
     compareOriginal.setButtonText(s.compareOriginal);
     compareRange.setButtonText(s.compareRange);
     alignTitle.setText(s.alignTitle, juce::dontSendNotification);
+    rangeTitle.setText(s.rangeTitle, juce::dontSendNotification);
+    rangeClear.setButtonText(s.rangeClear);
     alignGuideLabel.setText(s.alignGuide, juce::dontSendNotification);
     alignRun.setButtonText(s.alignRun);
     alignFile.setButtonText(s.alignFile);
@@ -916,6 +920,14 @@ void ToolsPanel::refresh()
 
     refreshGuides();
 
+    {
+        double a = 0.0, b = 0.0;
+        const bool ranged = roll.getTimingRange(a, b);
+        rangeClear.setEnabled(ranged);
+        rangeStatus.setText(ranged ? s.rangeStatus + juce::String(a, 2) + " - " + juce::String(b, 2) + " s\n" + s.rangeHint : s.rangeNone,
+                            juce::dontSendNotification);
+    }
+
     // ガイドの状態に合わせる（ずれの欄は、編集中でなければ現在値に追従させる）
     const auto guide = t->getGuide();
     for (auto* c : std::initializer_list<juce::Component*> { &offsetEditor, &offsetMinus, &offsetPlus, &guideClear })
@@ -972,7 +984,7 @@ void ToolsPanel::refresh()
 
 int ToolsPanel::getPreferredHeight() const noexcept
 {
-    return 8 + 24 + 28 * 2 + 14 + 24 + 18 + 24 + 8 + 36 + 22 + 18 + 28 + 6 + 36 + 6 + 110 + 14 + 24 + 28 + 56 + 80 + 16;
+    return 8 + 24 + 28 * 2 + 14 + (24 + 86 + 30 + 14) + 24 + 18 + 24 + 8 + 36 + 22 + 18 + 28 + 6 + 36 + 6 + 110 + 14 + 24 + 28 + 56 + 80 + 16;
 }
 
 void ToolsPanel::resized()
@@ -982,6 +994,11 @@ void ToolsPanel::resized()
     compareTitle.setBounds(area.removeFromTop(24));
     compareOriginal.setBounds(area.removeFromTop(28));
     compareRange.setBounds(area.removeFromTop(28));
+    area.removeFromTop(14);
+
+    rangeTitle.setBounds(area.removeFromTop(24));
+    rangeStatus.setBounds(area.removeFromTop(86));
+    rangeClear.setBounds(area.removeFromTop(30).removeFromLeft(150).reduced(2, 0));
     area.removeFromTop(14);
 
     alignTitle.setBounds(area.removeFromTop(24));

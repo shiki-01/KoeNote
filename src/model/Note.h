@@ -68,6 +68,10 @@ struct ModelSettings
     std::uint8_t gridDivision = 2;
     // ホストがテンポを提供しない場合に使う手動の BPM（0 = 使わない）
     float manualBpm = 0.0f;
+    // タイミング編集の範囲（元音声の時間軸の秒）。有効なとき、範囲の外は動かさない（両端を固定して、範囲の中だけ伸縮させる）。
+    bool timingRangeActive = false;
+    double timingRangeStartSec = 0.0;
+    double timingRangeEndSec = 0.0;
 };
 
 // 解析で得られたノート（元音声の時間軸）と、その編集内容

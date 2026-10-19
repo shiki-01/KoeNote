@@ -21,11 +21,25 @@ public:
     // 空の場合は恒等写像。最初のアンカーより前、最後のアンカーより後は傾き 1（平行移動）で外挿する。
     explicit TimeMap(std::vector<Anchor> anchorsIn = {});
 
+    // タイミング編集の範囲の固定。有効なとき、範囲の両端を「出力時間 = 元音声の時間」に固定し、範囲の外のタイミング編集は無視する
+    // （範囲の外は元音声と同じ時間のまま。範囲の中だけが伸縮する）。
+    struct Pins
+    {
+        bool active = false;
+        double startSec = 0.0;
+        double endSec = 0.0;
+
+        static Pins from(const model::ModelSettings& s) noexcept
+        {
+            return { s.timingRangeActive && s.timingRangeEndSec > s.timingRangeStartSec, s.timingRangeStartSec, s.timingRangeEndSec };
+        }
+    };
+
     // ノート列から対応表を作る。ノートの前後や間は次の規則で補う。
     //  - 最初のノートより前、最後のノートより後: 平行移動
     //  - ノート間（子音・ブレス・無音）: 線形に伸縮する。ただし直後のノートの手前 consonantSec までは
     //    ノートに付随させて伸縮させない（子音部の保護）。
-    static TimeMap fromNotes(const std::vector<model::Note>& notes, double consonantSec = 0.06);
+    static TimeMap fromNotes(const std::vector<model::Note>& notes, double consonantSec = 0.06, const Pins& pins = {});
 
     double toSource(double outSec) const noexcept;
     // outSec 付近での d(src)/d(out)。傾き 0 は「元音声を使わない区間」を表す。
