@@ -26,6 +26,9 @@ protected:
     void willDestroyAudioSource(juce::ARAAudioSource*) override;
 
     juce::ARAAudioSource* doCreateAudioSource(juce::ARADocument*, ARA::ARAAudioSourceHostRef) noexcept override;
+    juce::ARAAudioModification* doCreateAudioModification(juce::ARAAudioSource*,
+                                                          ARA::ARAAudioModificationHostRef,
+                                                          const juce::ARAAudioModification*) noexcept override;
     juce::ARAPlaybackRenderer* doCreatePlaybackRenderer() noexcept override;
     juce::ARAEditorRenderer* doCreateEditorRenderer() noexcept override;
 

@@ -1,6 +1,6 @@
 #include "plugin/KoeNotePlaybackRenderer.h"
 
-#include "plugin/KoeNoteAudioSource.h"
+#include "plugin/KoeNoteAudioModification.h"
 #include "render/PassthroughRenderer.h"
 
 #include <algorithm>
@@ -30,7 +30,7 @@ bool KoeNotePlaybackRenderer::processBlock(juce::AudioBuffer<float>& buffer,
 {
     buffer.clear();
 
-    // ARA モデルの編集中は何も読まない（無音を返す）
+    // ARA モデルの編集中や、レンダリング結果の差し替え中は何も読まない（無音を返す）
     const auto scope = gate.tryRead();
     if (! scope.locked())
         return true;
@@ -53,25 +53,25 @@ bool KoeNotePlaybackRenderer::processBlock(juce::AudioBuffer<float>& buffer,
         if (renderRange.isEmpty())
             continue;
 
-        auto* source = static_cast<KoeNoteAudioSource*>(region->getAudioModification()->getAudioSource());
-        const auto* audio = source->audioForPlayback();
+        auto* modification = static_cast<KoeNoteAudioModification*>(region->getAudioModification());
+        const auto audio = modification->audioForPlayback();
 
         // 読み込み未完了、またはサンプルレートが異なる場合はこのリージョンを鳴らさない
-        // （サンプルレート変換はフェーズ1 で対応する）
-        if (audio == nullptr || std::abs(audio->sampleRate - sampleRate) > 0.5)
+        // （サンプルレート変換は未対応。dev-setup.md に制約として記載）
+        if (! audio.valid || std::abs(audio.sampleRate - sampleRate) > 0.5)
         {
             success = false;
             continue;
         }
 
-        // リージョン内の位置 → 元音声（AudioModification）内の位置への変換。タイムストレッチなし。
+        // リージョン内の位置 → AudioModification 内の位置への変換。リージョンのタイムストレッチは未対応。
         const auto modificationStart = region->getStartInAudioModificationSamples();
         const auto offsetToSource = modificationStart - regionRange.getStart();
 
         const auto startInBlock = static_cast<int>(renderRange.getStart() - blockStart);
         const auto count = static_cast<int>(renderRange.getLength());
 
-        render::accumulatePassthrough(audio->view(),
+        render::accumulatePassthrough(audio.view,
                                       renderRange.getStart() + offsetToSource,
                                       buffer.getArrayOfWritePointers(),
                                       std::min(buffer.getNumChannels(), numChannels),

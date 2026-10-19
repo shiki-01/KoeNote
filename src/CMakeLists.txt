@@ -4,14 +4,27 @@ add_library(koenote_core STATIC
     analysis/AnalysisTypes.h
     analysis/PitchAnalyzer.h
     analysis/NullPitchAnalyzer.h
+    analysis/YinPitchAnalyzer.h
+    analysis/YinPitchAnalyzer.cpp
+    analysis/RuleBasedNoteSegmenter.h
+    analysis/RuleBasedNoteSegmenter.cpp
     model/ModelVersion.h
     model/Note.h
+    model/PitchTrack.h
     model/ByteStream.h
     model/EditModel.h
     model/EditModel.cpp
     render/ProcessingGate.h
     render/PassthroughRenderer.h
-    render/PassthroughRenderer.cpp)
+    render/PassthroughRenderer.cpp
+    render/PitchCurveEditor.h
+    render/PitchCurveEditor.cpp
+    render/PitchMarks.h
+    render/PitchMarks.cpp
+    render/PsolaRenderer.h
+    render/PsolaRenderer.cpp
+    render/TimeMap.h
+    render/TimeMap.cpp)
 
 add_library(koenote::core ALIAS koenote_core)
 
