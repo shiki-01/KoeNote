@@ -198,7 +198,7 @@ std::vector<GuideCandidate> KoeNoteAudioModification::getGuideCandidates() const
     return candidates;
 }
 
-void KoeNoteAudioModification::alignToGuide(int guideId)
+void KoeNoteAudioModification::alignToGuide(int guideId, double startOffsetSec)
 {
     int index = 0;
 
@@ -206,13 +206,13 @@ void KoeNoteAudioModification::alignToGuide(int guideId)
     {
         if (index++ == guideId)
         {
-            alignToGuideAudio(source->sharedAudio());
+            alignToGuideAudio(source->sharedAudio(), startOffsetSec);
             return;
         }
     }
 }
 
-void KoeNoteAudioModification::alignToGuideAudio(std::shared_ptr<const SourceAudioData> guide)
+void KoeNoteAudioModification::alignToGuideAudio(std::shared_ptr<const SourceAudioData> guide, double startOffsetSec)
 {
     if (guide == nullptr || ! model.hasAnalysis() || getSourceAudio() == nullptr)
     {
@@ -221,7 +221,7 @@ void KoeNoteAudioModification::alignToGuideAudio(std::shared_ptr<const SourceAud
         return;
     }
 
-    engine.requestAlign(std::move(guide));
+    engine.requestAlign(std::move(guide), startOffsetSec);
     sendChangeMessage();
 }
 

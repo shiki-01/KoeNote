@@ -374,3 +374,53 @@ TEST_CASE("実モデル: 編集が続いている間はニューラル加工が�
     const double expected = 220.0 * std::pow(2.0, 400.0 / 1200.0);
     CHECK_THAT(medianF0(h.views().edited, 0.6, 1.2), WithinAbs(expected, expected * 0.015));
 }
+
+TEST_CASE("整列: 開始位置のずれを指定すると、帯の半径（6 秒）を超えるずれも整列できる")
+{
+    Harness h(makeVoice());
+    h.engine.requestAnalysis();
+    REQUIRE(h.waitFor([&] { return h.analysis.has_value(); }));
+
+    // ガイド = 同じ声の頭に 8 秒の無音を足したもの（ガイドのほうが 8 秒遅く始まる）
+    auto delayed = std::vector<float>(static_cast<std::size_t>(8.0 * kSr), 0.0f);
+    const auto voice = makeVoice();
+    delayed.insert(delayed.end(), voice.begin(), voice.end());
+    auto guide = std::make_shared<plugin::SourceAudioData>();
+    guide->numChannels = 1;
+    guide->numFrames = static_cast<std::int64_t>(delayed.size());
+    guide->sampleRate = kSr;
+    guide->channels = { delayed };
+    guide->channelPointers = { guide->channels[0].data() };
+
+    h.engine.requestAlign(guide, 8.0);
+    REQUIRE(h.waitFor([&] { return h.alignment != nullptr; }));
+    REQUIRE(h.alignment->valid);
+
+    for (const auto& n : h.analysis->notes)
+        CHECK_THAT(h.alignment->mapTargetToGuide(n.startSec), WithinAbs(n.startSec + 8.0, 0.05));
+}
+
+TEST_CASE("整列: 負のずれ（ターゲットのほうが遅く始まる）も指定できる")
+{
+    Harness h(makeVoice());
+    h.engine.requestAnalysis();
+    REQUIRE(h.waitFor([&] { return h.analysis.has_value(); }));
+
+    // ターゲット（スタブの音声）は makeVoice。ガイドはその頭 0.5 秒を切り落としたもの（ガイド上の時刻 = ターゲット - 0.5）
+    const auto voice = makeVoice();
+    std::vector<float> trimmed(voice.begin() + static_cast<std::ptrdiff_t>(0.5 * kSr), voice.end());
+    auto guide = std::make_shared<plugin::SourceAudioData>();
+    guide->numChannels = 1;
+    guide->numFrames = static_cast<std::int64_t>(trimmed.size());
+    guide->sampleRate = kSr;
+    guide->channels = { trimmed };
+    guide->channelPointers = { guide->channels[0].data() };
+
+    h.engine.requestAlign(guide, -0.5);
+    REQUIRE(h.waitFor([&] { return h.alignment != nullptr; }));
+    REQUIRE(h.alignment->valid);
+
+    for (const auto& n : h.analysis->notes)
+        if (n.startSec > 0.8)
+            CHECK_THAT(h.alignment->mapTargetToGuide(n.startSec), WithinAbs(n.startSec - 0.5, 0.05));
+}

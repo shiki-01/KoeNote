@@ -519,7 +519,10 @@ void PianoRollView::drawGrid(juce::Graphics& g, juce::Rectangle<int> area) const
         g.drawHorizontalLine(static_cast<int>(y1), row.getX(), row.getRight());
     }
 
-    // 縦線（時間）
+    // 縦線（時間）。テンポがあるときは、拍のグリッド（drawTempoGrid）だけを使う。
+    if (tempo.valid())
+        return;
+
     double step = 1.0;
     for (const double candidate : { 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0 })
     {
@@ -574,6 +577,44 @@ void PianoRollView::drawRuler(juce::Graphics& g) const
     g.setColour(juce::Colour(0xff15171b));
     g.fillRect(area);
 
+    g.setFont(juce::FontOptions(11.0f));
+
+    if (tempo.valid())
+    {
+        // 小節・拍の目盛り（4/4 拍子として数える。ホストのテンポ情報の位置を小節 1 拍 1 とする）
+        const double q0 = tempo.secToQuarter(secOfX(static_cast<float>(area.getX())) + timeOffset);
+        const double q1 = tempo.secToQuarter(secOfX(static_cast<float>(area.getRight())) + timeOffset);
+
+        double stepQ = 0.25;
+        for (const double candidate : { 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0 })
+        {
+            stepQ = candidate;
+            if ((tempo.quarterToSec(q0 + candidate) - tempo.quarterToSec(q0)) * pixelsPerSec >= 56.0)
+                break;
+        }
+
+        for (double q = std::ceil(q0 / stepQ) * stepQ; q <= q1; q += stepQ)
+        {
+            const float x = xOfSec(tempo.quarterToSec(q) - timeOffset);
+            const bool onBeat = std::abs(q - std::round(q)) < 1.0e-6;
+            const long long beatIndex = std::llround(std::floor(q + 1.0e-6));
+            const long long bar = (beatIndex >= 0 ? beatIndex / 4 : -((-beatIndex + 3) / 4)) + 1;
+            const long long beat = ((beatIndex % 4) + 4) % 4 + 1;
+
+            g.setColour(kOctaveLine);
+            g.drawVerticalLine(static_cast<int>(x), static_cast<float>(area.getBottom() - (onBeat && beat == 1 ? 12 : 8)), static_cast<float>(area.getBottom()));
+
+            if (onBeat)
+            {
+                g.setColour(kText);
+                g.drawText(beat == 1 ? juce::String(bar) : juce::String(bar) + "." + juce::String(beat),
+                           static_cast<int>(x) + 3, 2, 60, 14, juce::Justification::centredLeft);
+            }
+        }
+
+        return;
+    }
+
     double step = 1.0;
     for (const double candidate : { 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0 })
     {
@@ -581,8 +622,6 @@ void PianoRollView::drawRuler(juce::Graphics& g) const
         if (candidate * pixelsPerSec >= 70.0)
             break;
     }
-
-    g.setFont(juce::FontOptions(11.0f));
 
     for (double t = std::max(0.0, std::floor(viewStartSec / step) * step); xOfSec(t) < area.getRight(); t += step)
     {

@@ -41,6 +41,7 @@ struct Strings
     // その他
     juce::String compareTitle, compareOriginal, compareRange;
     juce::String alignTitle, alignGuide, alignRun, alignFile, alignNoGuide, alignWorking, alignDone, alignFailed;
+    juce::String alignOffset, alignOffsetOnly, alignOffsetHint;
     juce::String neuralTitle, neuralEnable, neuralUnavailable, neuralRendering, neuralReady, neuralFailed, neuralFolderHint, neuralWaiting;
 
     // 状態表示

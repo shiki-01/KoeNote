@@ -7,6 +7,7 @@
 #include "plugin/NeuralService.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace koenote::plugin
 {
@@ -141,11 +142,12 @@ void RenderEngine::requestRender(RenderRequest request)
     worker->requestRender();
 }
 
-void RenderEngine::requestAlign(std::shared_ptr<const SourceAudioData> guide)
+void RenderEngine::requestAlign(std::shared_ptr<const SourceAudioData> guide, double startOffsetSec)
 {
     {
         const std::lock_guard<std::mutex> lock(handoffMutex);
         pendingGuide = std::move(guide);
+        pendingGuideOffset = std::isfinite(startOffsetSec) ? startOffsetSec : 0.0;
     }
 
     alignState = AlignInfo::State::Working;
@@ -296,11 +298,13 @@ void RenderEngine::runAnalysis()
 void RenderEngine::runAlign()
 {
     std::shared_ptr<const SourceAudioData> guide;
+    double offset = 0.0;
 
     {
         const std::lock_guard<std::mutex> lock(handoffMutex);
         guide = std::move(pendingGuide);
         pendingGuide.reset();
+        offset = pendingGuideOffset;
     }
 
     const auto target = source.sharedAudio();
@@ -313,14 +317,31 @@ void RenderEngine::runAlign()
 
     const auto guideMono = toMono(*guide);
     const auto targetMono = toMono(*target);
-    const analysis::MonoAudioView guideView { guideMono.data(), guideMono.size(), guide->sampleRate };
-    const analysis::MonoAudioView targetView { targetMono.data(), targetMono.size(), target->sampleRate };
+
+    // 開始位置のずれ: 「ガイドの時刻 = ターゲットの時刻 + offset」。ずれの分だけ、先に始まっている側の頭を切り落として整列し、
+    // 結果の対応表を元の時刻へ戻す。
+    const double dropGuide = std::max(0.0, offset);
+    const double dropTarget = std::max(0.0, -offset);
+    const auto guideSkip = std::min(guideMono.size(), static_cast<std::size_t>(dropGuide * guide->sampleRate));
+    const auto targetSkip = std::min(targetMono.size(), static_cast<std::size_t>(dropTarget * target->sampleRate));
+
+    const analysis::MonoAudioView guideView { guideMono.data() + guideSkip, guideMono.size() - guideSkip, guide->sampleRate };
+    const analysis::MonoAudioView targetView { targetMono.data() + targetSkip, targetMono.size() - targetSkip, target->sampleRate };
 
     auto result = analysis::alignAudio(guideView, targetView, {}, [this] (float p)
     {
         alignProgress = p;
         return ! juce::Thread::currentThreadShouldExit();
     });
+
+    if (result.valid)
+    {
+        for (auto& anchor : result.path)
+        {
+            anchor.guideSec += dropGuide;
+            anchor.targetSec += dropTarget;
+        }
+    }
 
     if (juce::Thread::currentThreadShouldExit())
         return;

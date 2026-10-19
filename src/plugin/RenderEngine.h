@@ -82,7 +82,8 @@ public:
     void requestAnalysis();
     // 最新の要求だけが処理される。実行中のレンダリングは、新しい要求が来ると中断される。
     void requestRender(RenderRequest request);
-    void requestAlign(std::shared_ptr<const SourceAudioData> guide);
+    // startOffsetSec: ガイド上の時刻 = ターゲットの時刻 + startOffsetSec（整列の開始位置のずれ）
+    void requestAlign(std::shared_ptr<const SourceAudioData> guide, double startOffsetSec = 0.0);
     // 実行中・待機中のレンダリングを取り消し、編集済みの音声を捨てて元音声へ戻す
     void resetRendering();
 
@@ -152,6 +153,7 @@ private:
     std::unique_ptr<analysis::AlignmentResult> pendingAlignment;
     std::optional<PendingRender> pendingRender;
     std::shared_ptr<const SourceAudioData> pendingGuide;
+    double pendingGuideOffset = 0.0;
     bool analysisFailedFlag = false;
     bool renderFinishedFlag = false;
 

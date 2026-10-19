@@ -62,8 +62,8 @@ public:
     CompareState getCompare() const override { return engine.getCompare(); }
 
     std::vector<GuideCandidate> getGuideCandidates() const override;
-    void alignToGuide(int guideId) override;
-    void alignToGuideAudio(std::shared_ptr<const SourceAudioData> guide) override;
+    void alignToGuide(int guideId, double startOffsetSec) override;
+    void alignToGuideAudio(std::shared_ptr<const SourceAudioData> guide, double startOffsetSec) override;
     AlignInfo getAlignInfo() const override { return engine.alignInfo(); }
 
     NeuralInfo getNeuralInfo() const override;

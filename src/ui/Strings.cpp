@@ -99,6 +99,9 @@ Strings makeJapanese()
     s.alignWorking = ja("整列中…");
     s.alignDone = ja("整列しました");
     s.alignFailed = ja("整列できませんでした");
+    s.alignOffset = ja("開始位置のずれ（秒）");
+    s.alignOffsetOnly = ja("ずれだけ適用");
+    s.alignOffsetHint = ja("ガイド上の時刻 = このクリップの時刻 + ずれ。ガイドと頭がずれているときに指定します（例: ガイドのほうが 1.5 秒遅く始まるなら 1.5）。「ずれだけ適用」は、整列せずにノート全体をずれの分だけ動かします。");
     s.neuralTitle = ja("ニューラル加工（高品質）");
     s.neuralEnable = ja("ニューラルボコーダーで合成する");
     s.neuralUnavailable = ja("利用できません: ");
@@ -221,6 +224,9 @@ Strings makeEnglish()
     s.alignWorking = "Aligning...";
     s.alignDone = "Aligned";
     s.alignFailed = "Alignment failed";
+    s.alignOffset = "Start offset (s)";
+    s.alignOffsetOnly = "Apply offset only";
+    s.alignOffsetHint = "Guide time = this clip's time + offset. Use it when the guide starts at a different position (e.g. 1.5 if the guide starts 1.5 s later). \"Apply offset only\" moves all notes by the offset without aligning.";
     s.neuralTitle = "Neural processing (high quality)";
     s.neuralEnable = "Synthesize with a neural vocoder";
     s.neuralUnavailable = "Not available: ";

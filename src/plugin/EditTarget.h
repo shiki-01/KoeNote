@@ -102,8 +102,10 @@ public:
 
     // タイミング整列（F-13）。ガイドの音声との DTW で、各ノートのタイミングを合わせる。
     virtual std::vector<GuideCandidate> getGuideCandidates() const { return {}; }
-    virtual void alignToGuide(int /*guideId*/) {}
-    virtual void alignToGuideAudio(std::shared_ptr<const SourceAudioData> /*guide*/) {}
+    // startOffsetSec: 「ガイド上の時刻 = このクリップの時刻 + startOffsetSec」とみなして整列を始める位置のずれ（秒）。
+    // ガイドと素材の頭がずれているとき（曲とボイスの開始位置が違う場合など）に指定する。
+    virtual void alignToGuide(int /*guideId*/, double /*startOffsetSec*/ = 0.0) {}
+    virtual void alignToGuideAudio(std::shared_ptr<const SourceAudioData> /*guide*/, double /*startOffsetSec*/ = 0.0) {}
     virtual AlignInfo getAlignInfo() const { return {}; }
 
     // ニューラル加工（F-17）
