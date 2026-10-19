@@ -9,7 +9,9 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include <functional>
+#include <optional>
 #include <set>
+#include <utility>
 #include <vector>
 
 namespace koenote::ui
@@ -21,7 +23,9 @@ enum class Tool
     Boundary,
     Assign, // MIDI の目標ノートへの手動の割り当て（F-12）
     Guide,  // 背景のガイド（リードボーカル）の開始位置をドラッグでずらす
-    Range   // タイミング編集の範囲を指定する（範囲の外は動かさない）
+    Range,  // タイミング編集の範囲を指定する（範囲の外は動かさない）
+    Draw,   // ピッチ曲線を手で描く（F-22）
+    Erase   // 手描きのピッチ曲線を消す（F-22）
 };
 
 using model::ScaleType;
@@ -85,6 +89,17 @@ public:
     void applyToSelection(const std::function<void(model::NoteEdit&)>& change);
     void endParameterEdit();
 
+    // 複数ノートの編集を 1 回の Undo で適用する（一括操作のボタン用）。変更があれば true。
+    bool applyEdits(const std::vector<std::pair<model::NoteId, model::NoteEdit>>& edits);
+
+    // 編集のコピー・貼り付け（F-27）。コピーは選択中の最初のノートの編集。
+    void copySelectedEdit();
+    void pasteToSelection();
+    bool hasCopiedEdit() const noexcept { return copiedEdit.has_value(); }
+
+    // 手描きのピッチ曲線を全て消す（F-22）
+    void clearDrawing();
+
     //==========================================================================
     void paint(juce::Graphics& g) override;
     void resized() override;
@@ -111,7 +126,9 @@ private:
         Playhead,
         RangeNew,
         RangeStart,
-        RangeEnd
+        RangeEnd,
+        Draw,
+        Erase
     };
 
     struct DragState
@@ -125,6 +142,8 @@ private:
         double startGuideOffset = 0.0;
         double rangeFixedSec = 0.0; // 範囲をドラッグしているときの、動かさない側の端（または新規範囲の起点）
         juce::Rectangle<int> rubber;
+        double lastDrawSec = 0.0;  // 手描き・消去で、直前に処理したマウス位置（出力時間軸の秒）
+        double lastDrawMidi = 0.0;
     };
 
     void changeListenerCallback(juce::ChangeBroadcaster*) override;
@@ -173,6 +192,12 @@ private:
     juce::Rectangle<float> targetBounds(const model::TargetNote& t) const;
     void clampView();
     void applyDrag(const juce::MouseEvent& e);
+    // 出力時間軸の 2 点の間を手描き・消去する（F-22）
+    void drawPitchBetween(double secA, double midiA, double secB, double midiB);
+    void erasePitchBetween(double secA, double secB);
+    // 出力時刻に対応する PitchTrack のフレーム（範囲外は端へ丸める）
+    std::size_t frameOfOutput(double outSec) const;
+    double drawMidiAt(const juce::MouseEvent& e) const;
 
     plugin::EditTarget* current = nullptr;
     Language language = Language::Japanese;
@@ -208,8 +233,11 @@ private:
         double outSec;
         double midi;
         bool breakBefore;
+        bool drawn; // 手描きの区間（F-22）
     };
     std::vector<CurvePoint> curve;
+
+    std::optional<model::NoteEdit> copiedEdit; // 編集のコピー（F-27）
 
     std::shared_ptr<const plugin::SourceAudioData> peaksSource;
     std::vector<float> peakMin, peakMax;

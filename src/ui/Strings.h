@@ -51,6 +51,13 @@ struct Strings
 
     // ヒント
     juce::String tipSelect, tipSplit, tipBoundary, tipAssign, tipGuide, tipRange, tipMerge, tipReset, tipReanalyze, tipAB;
+
+    // MIX 向け（F-22〜F-29）
+    juce::String toolDraw, toolErase, tipDraw, tipErase, copyEdit, pasteEdit, tipCopy, tipPaste;
+    juce::String paramAttackHold, paramReleaseHold, paramSibilance;
+    juce::String mixTitle, mixScopeHint, mixLevelStrength, mixLevelApply, mixBreath, mixBreathApply, mixSibilance, mixSibilanceApply;
+    juce::String mixDeviation, mixDeviationHint, mixClearDrawing;
+    juce::String followTitle, followUnison, followInterval, followStrength, followApply, followResult, followNoGuide;
 };
 
 const Strings& getStrings(Language language);

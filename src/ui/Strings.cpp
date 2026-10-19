@@ -142,6 +142,36 @@ Strings makeJapanese()
     s.tipReset = ja("選択したノートの編集内容を元に戻します (Delete)。");
     s.tipReanalyze = ja("編集内容を破棄して、音声を解析し直します。");
     s.tipAB = ja("編集前の音声と聴き比べます。");
+
+    s.toolDraw = ja("描く");
+    s.toolErase = ja("消す");
+    s.tipDraw = ja("ピッチ曲線をドラッグで描きます（Shift で半音にそろえる）。描いた区間は、ノートの編集より優先されます。");
+    s.tipErase = ja("ドラッグした範囲の手描きを消し、ノートの編集から求めた曲線に戻します。");
+    s.copyEdit = ja("コピー");
+    s.pasteEdit = ja("貼り付け");
+    s.tipCopy = ja("選択ノートの編集（ピッチの微調整、フォルマント、ゲインなど）をコピーします (Ctrl+C)。");
+    s.tipPaste = ja("コピーした編集を選択ノートへ貼り付けます。ピッチ移動とタイミングは変えません (Ctrl+V)。");
+    s.paramAttackHold = ja("補正しない頭の長さ");
+    s.paramReleaseHold = ja("補正しない尻の長さ");
+    s.paramSibilance = ja("歯擦音のゲイン");
+    s.mixTitle = ja("MIX 向けの一括調整");
+    s.mixScopeHint = ja("ノートを選択していれば選択ノートに、選択がなければ全ノートに適用します。");
+    s.mixLevelStrength = ja("音量の均し（強さ）");
+    s.mixLevelApply = ja("音量を均す");
+    s.mixBreath = ja("ブレス・ノイズのゲイン");
+    s.mixBreathApply = ja("ブレスに適用");
+    s.mixSibilance = ja("歯擦音のゲイン");
+    s.mixSibilanceApply = ja("歯擦音に適用");
+    s.mixDeviation = ja("ずれの表示（セント。0 で表示しない）");
+    s.mixDeviationHint = ja("スナップ先からこの値以上ずれたノートを赤い枠で表示します。");
+    s.mixClearDrawing = ja("手描きを全て消す");
+    s.followTitle = ja("ガイドのピッチへの追従");
+    s.followUnison = ja("ユニゾン（ガイドと同じ音高）");
+    s.followInterval = ja("音程差を保つ（ハモリ）");
+    s.followStrength = ja("強さ");
+    s.followApply = ja("ガイドに合わせる");
+    s.followResult = ja("%n ノートをガイドに合わせました");
+    s.followNoGuide = ja("先にガイドを選んで、解析が終わるのを待ってください。");
     return s;
 }
 
@@ -280,6 +310,36 @@ Strings makeEnglish()
     s.tipReset = "Reset the selected notes (Delete).";
     s.tipReanalyze = "Discard all edits and analyze the audio again.";
     s.tipAB = "Compare with the audio before editing.";
+
+    s.toolDraw = "Draw";
+    s.toolErase = "Erase";
+    s.tipDraw = "Drag to draw the pitch curve (hold Shift to snap to semitones). Drawn sections override note edits.";
+    s.tipErase = "Drag to erase drawn sections and return to the curve from the note edits.";
+    s.copyEdit = "Copy";
+    s.pasteEdit = "Paste";
+    s.tipCopy = "Copy the selected note's edits (pitch fine-tuning, formant, gains) (Ctrl+C).";
+    s.tipPaste = "Paste the copied edits to the selected notes. Pitch shift and timing are not changed (Ctrl+V).";
+    s.paramAttackHold = "Uncorrected attack";
+    s.paramReleaseHold = "Uncorrected release";
+    s.paramSibilance = "Sibilance gain";
+    s.mixTitle = "Mix tools";
+    s.mixScopeHint = "Applies to the selected notes, or to all notes when nothing is selected.";
+    s.mixLevelStrength = "Level matching (strength)";
+    s.mixLevelApply = "Match levels";
+    s.mixBreath = "Breath / noise gain";
+    s.mixBreathApply = "Apply to breaths";
+    s.mixSibilance = "Sibilance gain";
+    s.mixSibilanceApply = "Apply to sibilance";
+    s.mixDeviation = "Highlight deviation (cents, 0 = off)";
+    s.mixDeviationHint = "Notes that are this far or more from the snap target get a red outline.";
+    s.mixClearDrawing = "Clear all drawn pitch";
+    s.followTitle = "Follow guide pitch";
+    s.followUnison = "Unison (same pitch as the guide)";
+    s.followInterval = "Keep interval (harmony)";
+    s.followStrength = "Strength";
+    s.followApply = "Match to guide";
+    s.followResult = "Matched %n notes to the guide";
+    s.followNoGuide = "Select a guide first and wait for its analysis to finish.";
     return s;
 }
 } // namespace

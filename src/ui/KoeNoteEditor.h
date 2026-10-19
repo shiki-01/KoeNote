@@ -58,8 +58,8 @@ private:
     juce::Viewport noteView, batchView, midiView, toolsView;
     juce::TabbedComponent tabs { juce::TabbedButtonBar::TabsAtTop };
 
-    juce::TextButton selectButton, splitButton, boundaryButton, assignButton, guideButton, rangeButton;
-    juce::TextButton undoButton, redoButton, mergeButton, resetButton, abButton, fitButton, reanalyzeButton, languageButton;
+    juce::TextButton selectButton, splitButton, boundaryButton, assignButton, guideButton, rangeButton, drawButton, eraseButton;
+    juce::TextButton undoButton, redoButton, mergeButton, resetButton, copyButton, pasteButton, abButton, fitButton, reanalyzeButton, languageButton;
     juce::ComboBox snapBox, rootBox, scaleBox;
     juce::Label statusLabel;
     juce::TooltipWindow tooltipWindow { this, 600 };

@@ -1,5 +1,6 @@
 #include "ui/PianoRollView.h"
 
+#include "model/MixCorrection.h"
 #include "render/PitchCurveEditor.h"
 #include "ui/Strings.h"
 
@@ -97,7 +98,8 @@ void PianoRollView::setLanguage(Language l)
 void PianoRollView::setTool(Tool t)
 {
     tool = t;
-    setMouseCursor(t == Tool::Split ? juce::MouseCursor::CrosshairCursor : juce::MouseCursor::NormalCursor);
+    setMouseCursor(t == Tool::Split || t == Tool::Draw || t == Tool::Erase ? juce::MouseCursor::CrosshairCursor
+                                                                          : juce::MouseCursor::NormalCursor);
 }
 
 void PianoRollView::setSnap(SnapMode mode, int rootPitchClass, ScaleType scale)
@@ -398,7 +400,8 @@ void PianoRollView::refreshCaches()
     timeMap = render::TimeMap::fromNotes(m->notes(), 0.06, render::TimeMap::Pins::from(m->settings()));
 
     const auto& track = m->pitchTrack();
-    const auto adjust = render::computePitchAdjustCents(track, m->notes());
+    const auto& drawing = m->drawing();
+    const auto adjust = render::computePitchAdjustCents(track, m->notes(), &drawing);
 
     curve.clear();
     curve.reserve(track.size());
@@ -414,7 +417,8 @@ void PianoRollView::refreshCaches()
 
         const double outSec = timeMap.toOutput(track.timeOf(f));
         const double midi = toMidi(track.f0Hz[f]) + static_cast<double>(adjust[f]) / 100.0;
-        curve.push_back({ outSec, midi, ! previousVoiced });
+        float drawnMidi = 0.0f;
+        curve.push_back({ outSec, midi, ! previousVoiced, drawing.midiAt(f, drawnMidi) });
         previousVoiced = true;
     }
 }
@@ -876,6 +880,16 @@ void PianoRollView::drawNotes(juce::Graphics& g) const
         // 音量に応じた濃淡の帯（ノートの下側）
         g.setColour(juce::Colours::black.withAlpha(0.18f));
         g.fillRect(b.withTop(b.getBottom() - b.getHeight() * 0.25f).reduced(1.0f, 0.0f));
+
+        // スナップ先からのずれが大きいノート（F-28）は赤い枠で示す
+        if (const auto threshold = m->settings().deviationThresholdCents; threshold > 0)
+        {
+            if (std::abs(model::pitchDeviationCents(n, snapMode, snapRoot, snapScale)) >= static_cast<float>(threshold))
+            {
+                g.setColour(kPlayhead);
+                g.drawRoundedRectangle(b.expanded(1.5f), 3.5f, 2.0f);
+            }
+        }
     }
 }
 
@@ -907,6 +921,35 @@ void PianoRollView::drawCurve(juce::Graphics& g) const
 
     g.setColour(kCurve.withAlpha(0.85f));
     g.strokePath(path, juce::PathStrokeType(1.2f));
+
+    // 手描きの区間（F-22）は色を変えて重ねる
+    juce::Path drawnPath;
+    bool drawnOpen = false;
+
+    for (auto it = first; it != curve.end() && it->outSec <= t1; ++it)
+    {
+        if (! it->drawn)
+        {
+            drawnOpen = false;
+            continue;
+        }
+
+        const float x = xOfSec(it->outSec);
+        const float y = yOfMidi(it->midi);
+
+        if (! drawnOpen || it->breakBefore)
+            drawnPath.startNewSubPath(x, y);
+        else
+            drawnPath.lineTo(x, y);
+
+        drawnOpen = true;
+    }
+
+    if (! drawnPath.isEmpty())
+    {
+        g.setColour(kRange.withAlpha(0.95f));
+        g.strokePath(drawnPath, juce::PathStrokeType(2.0f));
+    }
 }
 
 void PianoRollView::drawWaveform(juce::Graphics& g) const
@@ -1195,7 +1238,7 @@ void PianoRollView::mouseMove(const juce::MouseEvent& e)
 {
     hoverSec = secOfX(static_cast<float>(e.x));
 
-    if (tool == Tool::Split)
+    if (tool == Tool::Split || tool == Tool::Draw || tool == Tool::Erase)
     {
         setMouseCursor(juce::MouseCursor::CrosshairCursor);
         return;
@@ -1303,6 +1346,23 @@ void PianoRollView::mouseDown(const juce::MouseEvent& e)
             drag.kind = DragKind::Guide;
             drag.startGuideOffset = current->getGuide().offsetSec;
         }
+
+        return;
+    }
+
+    if (tool == Tool::Draw || tool == Tool::Erase)
+    {
+        // ドラッグ全体を 1 回の Undo にまとめる
+        drag.kind = tool == Tool::Draw ? DragKind::Draw : DragKind::Erase;
+        drag.lastDrawSec = secOfX(e.position.x);
+        drag.lastDrawMidi = drawMidiAt(e);
+        m->beginEdit();
+        editGestureOpen = true;
+
+        if (tool == Tool::Draw)
+            drawPitchBetween(drag.lastDrawSec, drag.lastDrawMidi, drag.lastDrawSec, drag.lastDrawMidi);
+        else
+            erasePitchBetween(drag.lastDrawSec, drag.lastDrawSec);
 
         return;
     }
@@ -1561,6 +1621,22 @@ void PianoRollView::mouseDrag(const juce::MouseEvent& e)
 
             break;
 
+        case DragKind::Draw:
+        case DragKind::Erase:
+        {
+            const double sec = secOfX(static_cast<float>(e.x));
+            const double midi = drawMidiAt(e);
+
+            if (drag.kind == DragKind::Draw)
+                drawPitchBetween(drag.lastDrawSec, drag.lastDrawMidi, sec, midi);
+            else
+                erasePitchBetween(drag.lastDrawSec, sec);
+
+            drag.lastDrawSec = sec;
+            drag.lastDrawMidi = midi;
+            break;
+        }
+
         case DragKind::None: break;
 
         default: applyDrag(e); break;
@@ -1674,6 +1750,18 @@ bool PianoRollView::keyPressed(const juce::KeyPress& key)
         if (code == 'A' || code == 'a')
         {
             selectAll();
+            return true;
+        }
+
+        if (code == 'C' || code == 'c')
+        {
+            copySelectedEdit();
+            return true;
+        }
+
+        if (code == 'V' || code == 'v')
+        {
+            pasteToSelection();
             return true;
         }
 
@@ -1868,5 +1956,116 @@ void PianoRollView::endParameterEdit()
         editGestureOpen = false;
         notifyModelEdited(true);
     }
+}
+
+bool PianoRollView::applyEdits(const std::vector<std::pair<model::NoteId, model::NoteEdit>>& edits)
+{
+    auto* m = model();
+    if (m == nullptr || edits.empty() || ! m->applyEdits(edits))
+        return false;
+
+    notifyModelEdited(true);
+    return true;
+}
+
+//==============================================================================
+// 編集のコピー・貼り付け（F-27）
+void PianoRollView::copySelectedEdit()
+{
+    const auto* m = model();
+    if (m == nullptr || selection.empty())
+        return;
+
+    // 選択中で最も早いノート（id の順ではなく時間の順）
+    for (const auto& n : m->notes())
+    {
+        if (selection.count(n.id) != 0)
+        {
+            copiedEdit = n.edit;
+            return;
+        }
+    }
+}
+
+void PianoRollView::pasteToSelection()
+{
+    const auto* m = model();
+    if (m == nullptr || selection.empty() || ! copiedEdit.has_value())
+        return;
+
+    std::vector<std::pair<model::NoteId, model::NoteEdit>> edits;
+
+    for (const auto& n : m->notes())
+        if (selection.count(n.id) != 0)
+            edits.emplace_back(n.id, model::pasteEditParameters(n.edit, *copiedEdit));
+
+    applyEdits(edits);
+}
+
+//==============================================================================
+// 手描きのピッチ曲線（F-22）
+void PianoRollView::clearDrawing()
+{
+    if (auto* m = model(); m != nullptr && ! m->drawing().empty() && m->clearDrawing())
+        notifyModelEdited(true);
+}
+
+std::size_t PianoRollView::frameOfOutput(double outSec) const
+{
+    const auto* m = model();
+    if (m == nullptr || m->pitchTrack().empty())
+        return 0;
+
+    const auto& track = m->pitchTrack();
+    const double src = timeMap.toSource(outSec);
+    const auto frame = std::llround((src - track.startSec) / track.hopSec);
+    return static_cast<std::size_t>(std::clamp<long long>(frame, 0, static_cast<long long>(track.size()) - 1));
+}
+
+double PianoRollView::drawMidiAt(const juce::MouseEvent& e) const
+{
+    const double midi = midiOfY(e.position.y);
+    // Shift で半音にそろえる
+    return e.mods.isShiftDown() ? std::round(midi) : midi;
+}
+
+void PianoRollView::drawPitchBetween(double secA, double midiA, double secB, double midiB)
+{
+    auto* m = model();
+    if (m == nullptr || m->pitchTrack().empty())
+        return;
+
+    if (secB < secA)
+    {
+        std::swap(secA, secB);
+        std::swap(midiA, midiB);
+    }
+
+    const auto first = frameOfOutput(secA);
+    const auto last = frameOfOutput(secB);
+    std::vector<float> values;
+    values.reserve(last - first + 1);
+
+    for (auto f = first; f <= last; ++f)
+    {
+        const double u = last > first ? static_cast<double>(f - first) / static_cast<double>(last - first) : 1.0;
+        values.push_back(static_cast<float>(std::clamp(midiA + (midiB - midiA) * u, 1.0, 139.0)));
+    }
+
+    if (m->drawPitch(first, values))
+        notifyModelEdited(false);
+}
+
+void PianoRollView::erasePitchBetween(double secA, double secB)
+{
+    auto* m = model();
+    if (m == nullptr || m->pitchTrack().empty() || m->drawing().empty())
+        return;
+
+    const auto first = frameOfOutput(std::min(secA, secB));
+    const auto last = frameOfOutput(std::max(secA, secB));
+
+    if (m->erasePitch(first, last + 1))
+        notifyModelEdited(false);
 }
 } // namespace koenote::ui

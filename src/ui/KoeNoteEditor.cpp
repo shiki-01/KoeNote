@@ -27,13 +27,13 @@ KoeNoteEditor::KoeNoteEditor(plugin::KoeNoteProcessor& processor)
       midiPanel(roll),
       toolsPanel(roll)
 {
-    for (auto* b : { &selectButton, &splitButton, &boundaryButton, &assignButton, &guideButton, &rangeButton })
+    for (auto* b : { &selectButton, &splitButton, &boundaryButton, &assignButton, &guideButton, &rangeButton, &drawButton, &eraseButton })
     {
         styleToggle(*b);
         addAndMakeVisible(*b);
     }
 
-    for (auto* b : { &undoButton, &redoButton, &mergeButton, &resetButton, &abButton, &fitButton, &reanalyzeButton, &languageButton })
+    for (auto* b : { &undoButton, &redoButton, &mergeButton, &resetButton, &copyButton, &pasteButton, &abButton, &fitButton, &reanalyzeButton, &languageButton })
         addAndMakeVisible(*b);
 
     abButton.setClickingTogglesState(true);
@@ -45,6 +45,10 @@ KoeNoteEditor::KoeNoteEditor(plugin::KoeNoteProcessor& processor)
     assignButton.onClick = [this] { roll.setTool(Tool::Assign); };
     guideButton.onClick = [this] { roll.setTool(Tool::Guide); };
     rangeButton.onClick = [this] { roll.setTool(Tool::Range); };
+    drawButton.onClick = [this] { roll.setTool(Tool::Draw); };
+    eraseButton.onClick = [this] { roll.setTool(Tool::Erase); };
+    copyButton.onClick = [this] { roll.copySelectedEdit(); };
+    pasteButton.onClick = [this] { roll.pasteToSelection(); };
     undoButton.onClick = [this] { roll.undo(); };
     redoButton.onClick = [this] { roll.redo(); };
     mergeButton.onClick = [this] { roll.mergeSelected(); };
@@ -162,6 +166,10 @@ void KoeNoteEditor::applyLanguage()
     assignButton.setButtonText(s.toolAssign);
     guideButton.setButtonText(s.toolGuide);
     rangeButton.setButtonText(s.toolRange);
+    drawButton.setButtonText(s.toolDraw);
+    eraseButton.setButtonText(s.toolErase);
+    copyButton.setButtonText(s.copyEdit);
+    pasteButton.setButtonText(s.pasteEdit);
     undoButton.setButtonText(s.undo);
     redoButton.setButtonText(s.redo);
     mergeButton.setButtonText(s.merge);
@@ -177,6 +185,10 @@ void KoeNoteEditor::applyLanguage()
     assignButton.setTooltip(s.tipAssign);
     guideButton.setTooltip(s.tipGuide);
     rangeButton.setTooltip(s.tipRange);
+    drawButton.setTooltip(s.tipDraw);
+    eraseButton.setTooltip(s.tipErase);
+    copyButton.setTooltip(s.tipCopy);
+    pasteButton.setTooltip(s.tipPaste);
     mergeButton.setTooltip(s.tipMerge);
     resetButton.setTooltip(s.tipReset);
     reanalyzeButton.setTooltip(s.tipReanalyze);
@@ -293,8 +305,8 @@ void KoeNoteEditor::resized()
 
     if (! isARAEditorView())
     {
-        for (auto* c : std::initializer_list<juce::Component*> { &selectButton, &splitButton, &boundaryButton, &assignButton, &guideButton, &rangeButton, &undoButton, &redoButton,
-                                                                 &mergeButton, &resetButton, &abButton, &fitButton, &reanalyzeButton, &languageButton,
+        for (auto* c : std::initializer_list<juce::Component*> { &selectButton, &splitButton, &boundaryButton, &assignButton, &guideButton, &rangeButton, &drawButton, &eraseButton, &undoButton, &redoButton,
+                                                                 &mergeButton, &resetButton, &copyButton, &pasteButton, &abButton, &fitButton, &reanalyzeButton, &languageButton,
                                                                  &snapBox, &rootBox, &scaleBox, &statusLabel, &roll, &tabs })
             c->setVisible(false);
         return;
@@ -305,8 +317,8 @@ void KoeNoteEditor::resized()
     statusLabel.setBounds(area.removeFromBottom(kStatusHeight).reduced(8, 2));
 
     // 1 段目: ツール、スナップ、言語
-    for (auto* b : { &selectButton, &splitButton, &boundaryButton, &assignButton, &guideButton, &rangeButton })
-        b->setBounds(row1.removeFromLeft(72).reduced(1, 0));
+    for (auto* b : { &selectButton, &splitButton, &boundaryButton, &assignButton, &guideButton, &rangeButton, &drawButton, &eraseButton })
+        b->setBounds(row1.removeFromLeft(66).reduced(1, 0));
 
     row1.removeFromLeft(12);
     snapBox.setBounds(row1.removeFromLeft(112));
@@ -317,8 +329,8 @@ void KoeNoteEditor::resized()
     languageButton.setBounds(row1.removeFromRight(76));
 
     // 2 段目: 編集操作、A/B、表示、再解析
-    for (auto* b : { &undoButton, &redoButton, &mergeButton, &resetButton })
-        b->setBounds(row2.removeFromLeft(84).reduced(1, 0));
+    for (auto* b : { &undoButton, &redoButton, &mergeButton, &resetButton, &copyButton, &pasteButton })
+        b->setBounds(row2.removeFromLeft(80).reduced(1, 0));
 
     row2.removeFromLeft(12);
     abButton.setBounds(row2.removeFromLeft(56));
