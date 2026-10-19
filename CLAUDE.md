@@ -5,14 +5,16 @@ Melodyne 型のノート単位ボーカル編集プラグイン。ARA2 対応 VS
 
 ## 現状
 
-- フェーズ0（ARA パススルー）、フェーズ1（MVP: F-01〜F-08）、フェーズ2（F-09〜F-18）の実装が完了。
-  フェーズ0・1 は Cakewalk Sonar でユーザーが確認済み。**フェーズ2 の Sonar 実機確認は未実施**（手順・確認項目は [docs/dev-setup.md](docs/dev-setup.md) の 4.4）。
-- 検証済み: Catch2 単体テスト（約 165 件）、RenderEngine の結合テスト（JUCE コンソールアプリ）、pluginval（strictness 5）、ARA Test Host（9 シナリオ）、
+- フェーズ0（ARA パススルー）、フェーズ1（MVP: F-01〜F-08）、フェーズ2（F-09〜F-18）、MIX 向けの機能（F-22〜F-29。2026-10 に追加）の実装が完了。
+  v1.0 前の改善（書き出し時のニューラル完了待ち、拍子、sinc のレート変換、ホストの選択範囲の表示）も実装済み。
+  フェーズ0・1 は Cakewalk Sonar でユーザーが確認済み。**フェーズ2 以降の Sonar 実機確認は未実施**（手順・確認項目は [docs/dev-setup.md](docs/dev-setup.md) の 4.4）。
+- 配布は GitHub Releases のみ（zip と Inno Setup のインストーラー。タグの push で `release.yml` が下書きを作る）。利用者向けの説明書は [docs/user-guide.md](docs/user-guide.md)。
+- 検証済み: Catch2 単体テスト（約 190 件）、RenderEngine の結合テスト（JUCE コンソールアプリ）、pluginval（strictness 5）、ARA Test Host（9 シナリオ）、
   実モデル（PC-NSF-HiFiGAN）でのニューラル合成。合成歌声での精度: RPA 98.3%、オクターブ誤り 0%、COnP F 値 0.99。
 - 設計は [docs/design.md](docs/design.md)、ニューラル加工のセットアップは [docs/neural-setup.md](docs/neural-setup.md)。
 - 要件定義書との差分: F0 推定は FCPE ではなく YIN ベースの pYIN 風（モデル不要。合成歌声で目標精度を満たす）。FCPE（ONNX）は実音声での評価結果を見て判断する。
 - 未評価: 実音声（本人の歌声・ボカロ）での精度。`koenote_analyze` と `tools/eval`（mir_eval）で評価できる（評価データが必要）。
-- 次のステップ: Sonar でのフェーズ2 の確認、実音声での精度評価、フェーズ3（F-19〜F-21、macOS、他 DAW の検証）。
+- 次のステップ: Sonar でのフェーズ2・MIX 向けの確認、実音声での精度評価（評価データはユーザーが用意する）、最初のリリース（タグの push）、フェーズ3（F-19〜F-21、F-30・F-31、macOS、他 DAW の検証）。
 
 ## 技術スタック
 
@@ -20,7 +22,7 @@ Melodyne 型のノート単位ボーカル編集プラグイン。ARA2 対応 VS
 - JUCE **8.0.15**（git submodule、`external/JUCE`。main ブランチは JUCE 9 のため、必ずタグで固定する）。ライセンスは AGPLv3 を選択。
 - ARA SDK releases/2.3.0（submodule、`external/ARA_SDK`。ARA SDK 自体の submodule も取得）。`juce_set_ara_sdk_path()` と `IS_ARA_EFFECT TRUE` で ARA 対応。
 - Catch2 v3.16.1（submodule）。精度評価は Python + mir_eval（`tools/eval`）。
-- CI: GitHub Actions（windows-latest）でビルド、ctest、pluginval（strictness 5）。
+- CI: GitHub Actions（windows-latest）でビルド、ctest、pluginval（strictness 5）、インストーラーの作成。
 - 基準 DAW: Cakewalk Sonar（無料版）。第二検証環境は REAPER。
 
 ## ディレクトリ構成
@@ -51,7 +53,7 @@ Melodyne 型のノート単位ボーカル編集プラグイン。ARA2 対応 VS
 - コードコメントは日本語。ライブラリ名・技術用語はカタカナにせず英字のまま書く。
 - ライセンスは AGPLv3。`LICENSE`、`THIRD_PARTY_NOTICES.md` を維持する。依存ライブラリを追加したら notices も更新する。
 - 学習済みモデルの重み・`onnxruntime.dll` はリポジトリ・配布物に含めない（`.gitignore`）。ニューラル加工は利用者が配置したものを読み込む（非商用条件付きの重みがあるため）。
-- 保存形式は現在 v3（v1・v2 も読める）。保存形式（`kEditModelFormatVersion`）を変えるときは、旧バージョンの読み込みを残し、旧バージョンの固定バイト列のテストを足す（v1 のテストが目安）。
+- 保存形式は現在 v4（v1〜v3 も読める）。保存形式（`kEditModelFormatVersion`）を変えるときは、旧バージョンの読み込みを残し、旧バージョンの固定バイト列のテストを足す（v1 のテストが目安）。
 - 新しいライブラリ・モデルは採用前にライセンスを確認する（GPL 系は AGPLv3 と整合する場合のみ）。
 - `KOENOTE_WEBSITE`（ARA の informationURL。空は不可）は GitHub のリポジトリ URL。配布は GitHub Releases のみ（専用サイトなし）。リリース手順は docs/dev-setup.md の 10 章。
 

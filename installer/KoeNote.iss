@@ -1,4 +1,4 @@
-; KoeNote の Windows インストーラー（Inno Setup 6）。
+﻿; KoeNote の Windows インストーラー（Inno Setup 6）。
 ; VST3 を共通の VST3 フォルダ（C:\Program Files\Common Files\VST3）へ配置し、ライセンス文と説明書を
 ; C:\Program Files\KoeNote へ置く。ニューラル加工の onnxruntime.dll と重みは含めない（要件定義書 9章）。
 ;
