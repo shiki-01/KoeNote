@@ -1,5 +1,7 @@
 #include "render/GainEnvelope.h"
 
+#include "render/Sibilance.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -10,14 +12,17 @@ namespace
 float dbToLinear(float db) noexcept { return std::pow(10.0f, db / 20.0f); }
 } // namespace
 
-GainEnvelope::GainEnvelope(const std::vector<model::Note>& notes, double outDurationSec)
+GainEnvelope::GainEnvelope(const std::vector<model::Note>& notes, double outDurationSec, const Sibilance& sibilance)
 {
+    const bool useSibilance = sibilance.amount != nullptr && sibilance.track != nullptr && sibilance.timeMap != nullptr
+                              && sibilance.amount->size() == sibilance.track->size() && hasSibilanceEdits(notes);
+
     const auto isNeutral = [] (const model::Note& n)
     {
         return n.edit.gainDb == 0.0f && n.edit.consonantGainDb == 0.0f && n.edit.breathGainDb == 0.0f;
     };
 
-    if (outDurationSec <= 0.0 || std::all_of(notes.begin(), notes.end(), isNeutral))
+    if (outDurationSec <= 0.0 || (std::all_of(notes.begin(), notes.end(), isNeutral) && ! useSibilance))
         return;
 
     const auto count = static_cast<std::size_t>(std::ceil(outDurationSec / kResolutionSec)) + 1;
@@ -58,6 +63,33 @@ GainEnvelope::GainEnvelope(const std::vector<model::Note>& notes, double outDura
         }
 
         fill(n.outEndSec(), breathEnd, dbToLinear(n.edit.breathGainDb));
+    }
+
+    // 歯擦音（F-24）。出力時刻を元音声の時刻へ戻して、検出結果と属するノートを引く。
+    if (useSibilance)
+    {
+        const auto& amount = *sibilance.amount;
+        const auto& track = *sibilance.track;
+
+        for (std::size_t i = 0; i < count; ++i)
+        {
+            const double src = sibilance.timeMap->toSource(static_cast<double>(i) * kResolutionSec);
+            const auto frame = std::llround((src - track.startSec) / track.hopSec);
+
+            if (frame < 0 || static_cast<std::size_t>(frame) >= amount.size())
+                continue;
+
+            const float a = amount[static_cast<std::size_t>(frame)];
+            if (a <= 0.0f)
+                continue;
+
+            const int owner = sibilanceOwner(notes, src);
+            if (owner < 0)
+                continue;
+
+            const float gain = dbToLinear(notes[static_cast<std::size_t>(owner)].edit.sibilanceGainDb);
+            steps[i] *= 1.0f + a * (gain - 1.0f);
+        }
     }
 
     // 約 10 ms（5 点）の移動平均で滑らかにする

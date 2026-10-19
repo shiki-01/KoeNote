@@ -107,6 +107,7 @@ void KoeNoteAudioModification::requestRender()
     RenderEngine::RenderRequest request;
     request.notes = model.notes();
     request.track = model.pitchTrack();
+    request.drawing = model.drawing();
     request.revision = model.revision();
     request.settings = model.settings();
     engine.requestRender(std::move(request));

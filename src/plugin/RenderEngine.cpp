@@ -458,7 +458,7 @@ void RenderEngine::runRender()
     const auto token = pending->token;
 
     std::shared_ptr<RenderedClip> newClip;
-    const bool audible = render::hasAudibleEdits(request.notes);
+    const bool audible = render::hasAudibleEdits(request.notes, &request.drawing);
 
     if (audible)
     {
@@ -470,6 +470,7 @@ void RenderEngine::runRender()
         input.track = &request.track;
         input.notes = &request.notes;
         input.pins = render::TimeMap::Pins::from(request.settings);
+        input.drawing = &request.drawing;
 
         auto rendered = render::renderEditedAudio(input, [this, token] (float)
         {
@@ -510,7 +511,7 @@ void RenderEngine::runRender()
     // 高品質のニューラル加工（F-17）。先に TD-PSOLA の結果が再生されるため、音切れは出ない。
     if (useNeural)
     {
-        runNeural(audio, request.notes, request.track, render::TimeMap::Pins::from(request.settings), token, request.revision);
+        runNeural(audio, request.notes, request.track, request.drawing, render::TimeMap::Pins::from(request.settings), token, request.revision);
     }
     else
     {
@@ -523,6 +524,7 @@ void RenderEngine::runRender()
 void RenderEngine::runNeural(const std::shared_ptr<const SourceAudioData>& audio,
                              const std::vector<model::Note>& notes,
                              const model::PitchTrack& track,
+                             const model::PitchDrawing& drawing,
                              const render::TimeMap::Pins& pins,
                              std::uint64_t token,
                              std::uint64_t revision)
@@ -570,6 +572,7 @@ void RenderEngine::runNeural(const std::shared_ptr<const SourceAudioData>& audio
     input.track = &track;
     input.notes = &notes;
     input.pins = pins;
+    input.drawing = &drawing;
 
     auto rendered = neural::renderNeural(input, *vocoder, [&] (float p)
     {

@@ -67,6 +67,7 @@ public:
     {
         std::vector<model::Note> notes;
         model::PitchTrack track;
+        model::PitchDrawing drawing; // 手描きのピッチ曲線（F-22）
         std::uint64_t revision = 0;
         model::ModelSettings settings;
     };
@@ -143,6 +144,7 @@ private:
     void runNeural(const std::shared_ptr<const SourceAudioData>& audio,
                    const std::vector<model::Note>& notes,
                    const model::PitchTrack& track,
+                   const model::PitchDrawing& drawing,
                    const render::TimeMap::Pins& pins,
                    std::uint64_t token,
                    std::uint64_t revision);

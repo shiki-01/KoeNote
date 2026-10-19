@@ -3,6 +3,7 @@
 #include "render/GainEnvelope.h"
 #include "render/PitchCurveEditor.h"
 #include "render/PitchMarks.h"
+#include "render/Sibilance.h"
 #include "render/TimeMap.h"
 
 #include <algorithm>
@@ -46,6 +47,11 @@ bool hasAudibleEdits(const std::vector<model::Note>& notes) noexcept
     return std::any_of(notes.begin(), notes.end(), [] (const model::Note& n) { return ! n.edit.isDefault(); });
 }
 
+bool hasAudibleEdits(const std::vector<model::Note>& notes, const model::PitchDrawing* drawing) noexcept
+{
+    return hasAudibleEdits(notes) || (drawing != nullptr && ! drawing->empty());
+}
+
 RenderedAudio renderEditedAudio(const RenderInput& input, const RenderProgress& progress)
 {
     RenderedAudio result;
@@ -61,7 +67,7 @@ RenderedAudio renderEditedAudio(const RenderInput& input, const RenderProgress& 
     const auto& track = input.track != nullptr ? *input.track : noTrack;
 
     // 編集がなければ元音声をそのまま返す
-    if (! hasAudibleEdits(notes))
+    if (! hasAudibleEdits(notes, input.drawing))
     {
         result.numChannels = input.numChannels;
         result.sampleRate = sr;
@@ -86,7 +92,7 @@ RenderedAudio renderEditedAudio(const RenderInput& input, const RenderProgress& 
         return result;
 
     const auto timeMap = TimeMap::fromNotes(notes, 0.06, input.pins);
-    const auto adjust = computePitchAdjustCents(track, notes);
+    const auto adjust = computePitchAdjustCents(track, notes, input.drawing);
     const auto formant = computeFormantShiftCents(track, notes, adjust);
 
     const double srcDurationSec = static_cast<double>(numSrc) / sr;
@@ -98,7 +104,12 @@ RenderedAudio renderEditedAudio(const RenderInput& input, const RenderProgress& 
     result.sampleRate = sr;
     result.channels.assign(static_cast<std::size_t>(input.numChannels), std::vector<float>(numOut, 0.0f));
 
-    const GainEnvelope gains(notes, outDurationSec);
+    // 歯擦音（F-24）は、ゲインが設定されているときだけ検出する
+    std::vector<float> sibilance;
+    if (hasSibilanceEdits(notes))
+        sibilance = detectSibilance(mono.data(), numSrc, sr, track);
+
+    const GainEnvelope gains(notes, outDurationSec, { &sibilance, &track, &timeMap });
 
     const auto maxHalf = static_cast<std::int64_t>(0.03 * sr);
 

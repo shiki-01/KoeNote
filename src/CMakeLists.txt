@@ -35,6 +35,10 @@ add_library(koenote_core STATIC
     model/TempoMap.h
     model/TempoMap.cpp
     model/Note.h
+    model/PitchDrawing.h
+    model/PitchDrawing.cpp
+    model/MixCorrection.h
+    model/MixCorrection.cpp
     model/PitchTrack.h
     model/ByteStream.h
     model/EditModel.h
@@ -50,6 +54,8 @@ add_library(koenote_core STATIC
     render/PitchMarks.cpp
     render/PsolaRenderer.h
     render/PsolaRenderer.cpp
+    render/Sibilance.h
+    render/Sibilance.cpp
     render/TimeMap.h
     render/TimeMap.cpp)
 

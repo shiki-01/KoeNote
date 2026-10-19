@@ -4,6 +4,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <cmath>
+
 using namespace koenote::model;
 using Catch::Matchers::WithinAbs;
 
@@ -407,7 +409,7 @@ TEST_CASE("v1 から読み込んだモデルを保存し直すと、v2 として
     CHECK(again->notes()[0].edit.pitchOffsetCents == 150.0f);
 }
 
-TEST_CASE("v3 の保存サイズ（固定）と、v2 データの読み込み")
+TEST_CASE("v4 の保存サイズ（固定）")
 {
     EditModel m;
     PitchTrack t;
@@ -416,16 +418,203 @@ TEST_CASE("v3 の保存サイズ（固定）と、v2 データの読み込み")
     t.voicing = { 1.0f };
     m.setAnalysis(t, { makeNote(1.0, 2.0, 60.0f) });
 
-    // ヘッダ 17 + トラック 32 + ノート数 8 + ノート 88 + 目標数 8 + 割り当て数 8 + 設定 9 + 範囲 17
-    auto bytes = m.serialize();
-    CHECK(bytes.size() == 17 + 32 + 8 + 88 + 8 + 8 + 9 + 17);
+    // ヘッダ 17 + トラック 32 + ノート数 8 + ノート 100 + 目標数 8 + 割り当て数 8 + 設定 9 + 範囲 17
+    // + ずれのしきい値 1 + 手描きの区間数 8
+    const auto bytes = m.serialize();
+    CHECK(bytes.size() == 17 + 32 + 8 + 100 + 8 + 8 + 9 + 17 + 1 + 8);
+}
 
+// バージョン 3 の保存データ（MIX 向けの項目を追加する前）を、手で組み立てたバイト列で再現する。
+// v3 の形式は変更してはならない。新しいバージョンでも、このデータを読み込めること。
+namespace
+{
+std::vector<std::uint8_t> makeVersion3Blob()
+{
+    ByteWriter w;
+    w.writeU32(kEditModelMagic);
+    w.writeU32(3);
+    w.writeU8(1);  // analysed
+    w.writeU64(2); // nextNoteId
+
+    w.writeF64(0.0);
+    w.writeF64(0.5);
+    w.writeU64(1);
+    w.writeF32(100.0f);
+    w.writeF32(1.0f);
+
+    w.writeU64(1);
+    w.writeU64(1);       // id
+    w.writeF64(1.0);     // start
+    w.writeF64(2.0);     // end
+    w.writeF32(60.0f);   // detectedMidi
+    w.writeF32(0.25f);   // level
+    w.writeF32(120.0f);  // pitchOffsetCents
+    w.writeF32(0.8f);    // centerCorrection
+    w.writeF32(1.0f);    // vibratoScale
+    w.writeF32(1.0f);    // driftScale
+    w.writeF32(0.0f);    // transitionSmoothness
+    w.writeF64(-1.0);
+    w.writeF64(-1.0);
+    w.writeF32(-3.0f);   // gainDb
+    w.writeF32(0.0f);    // formantShiftCents
+    w.writeF32(0.0f);    // formantFollow
+    w.writeF32(0.0f);    // consonantGainDb
+    w.writeF32(-6.0f);   // breathGainDb
+
+    w.writeU64(0); // 目標
+    w.writeU64(0); // 割り当て
+
+    w.writeU8(0);  // renderMode
+    w.writeU8(1);  // snapMode
+    w.writeU8(0);  // keyRoot
+    w.writeU8(0);  // keyMinor
+    w.writeU8(2);  // gridDivision
+    w.writeF32(0.0f);
+    w.writeU8(1);  // timingRangeActive
+    w.writeF64(1.25);
+    w.writeF64(1.75);
+
+    return w.release();
+}
+} // namespace
+
+TEST_CASE("バージョン 3 の保存データを読み込み、MIX 向けの項目は既定値になる")
+{
+    const auto bytes = makeVersion3Blob();
+    // ヘッダ 17 + トラック 32 + ノート数 8 + ノート 88 + 目標数 8 + 割り当て数 8 + 設定 9 + 範囲 17
+    REQUIRE(bytes.size() == 17 + 32 + 8 + 88 + 8 + 8 + 9 + 17);
+
+    const auto restored = EditModel::deserialize(bytes.data(), bytes.size());
+    REQUIRE(restored.has_value());
+    REQUIRE(restored->notes().size() == 1);
+
+    const auto& n = restored->notes()[0];
+    CHECK(n.edit.pitchOffsetCents == 120.0f);
+    CHECK(n.edit.centerCorrection == 0.8f);
+    CHECK(n.edit.gainDb == -3.0f);
+    CHECK(n.edit.breathGainDb == -6.0f);
+    CHECK(n.edit.attackHoldSec == 0.0f);
+    CHECK(n.edit.releaseHoldSec == 0.0f);
+    CHECK(n.edit.sibilanceGainDb == 0.0f);
+    CHECK(restored->settings().timingRangeActive);
+    CHECK(restored->settings().timingRangeStartSec == 1.25);
+    CHECK(restored->settings().deviationThresholdCents == 0);
+    CHECK(restored->drawing().empty());
+
+    // 保存し直すと最新のバージョンになり、内容は保たれる
+    const auto latest = restored->serialize();
+    CHECK(latest[4] == kEditModelFormatVersion);
+    const auto again = EditModel::deserialize(latest.data(), latest.size());
+    REQUIRE(again.has_value());
+    CHECK(again->notes()[0].edit.breathGainDb == -6.0f);
+}
+
+TEST_CASE("v2 のデータ（範囲なし）も読める")
+{
+    auto bytes = makeVersion3Blob();
     // 範囲の 17 バイトを除いてバージョンを 2 にすると、v2 のデータになる
     bytes.resize(bytes.size() - 17);
     bytes[4] = 2;
     const auto v2 = EditModel::deserialize(bytes.data(), bytes.size());
     REQUIRE(v2.has_value());
     CHECK_FALSE(v2->settings().timingRangeActive);
+    CHECK(v2->notes()[0].edit.gainDb == -3.0f);
+}
+
+TEST_CASE("MIX 向けの項目（頭・尻の除外、歯擦音、しきい値、手描き）は保存・復元できる")
+{
+    EditModel m;
+    PitchTrack t;
+    t.hopSec = 0.01;
+    t.f0Hz.assign(300, 220.0f);
+    t.voicing.assign(300, 1.0f);
+    m.setAnalysis(t, { makeNote(0.5, 1.5, 57.0f), makeNote(1.6, 2.5, 59.0f) });
+
+    auto edit = m.notes()[0].edit;
+    edit.attackHoldSec = 0.12f;
+    edit.releaseHoldSec = 0.2f;
+    edit.sibilanceGainDb = -8.0f;
+    REQUIRE(m.setNoteEdit(m.notes()[0].id, edit));
+
+    REQUIRE(m.drawPitch(10, { 57.0f, 57.5f, 58.0f }));
+    REQUIRE(m.drawPitch(100, std::vector<float>(5, 60.0f)));
+
+    auto s = m.settings();
+    s.deviationThresholdCents = 25;
+    m.setSettings(s);
+
+    const auto bytes = m.serialize();
+    const auto restored = EditModel::deserialize(bytes.data(), bytes.size());
+    REQUIRE(restored.has_value());
+
+    const auto& n = restored->notes()[0];
+    CHECK(n.edit.attackHoldSec == 0.12f);
+    CHECK(n.edit.releaseHoldSec == 0.2f);
+    CHECK(n.edit.sibilanceGainDb == -8.0f);
+    CHECK(restored->settings().deviationThresholdCents == 25);
+    CHECK(restored->drawing() == m.drawing());
+    REQUIRE(restored->drawing().segments().size() == 2);
+
+    float midi = 0.0f;
+    CHECK(restored->drawing().midiAt(11, midi));
+    CHECK(midi == 57.5f);
+}
+
+TEST_CASE("手描きはピッチ曲線の範囲で切り詰められ、Undo / Redo できる")
+{
+    EditModel m;
+    PitchTrack t;
+    t.hopSec = 0.01;
+    t.f0Hz.assign(20, 220.0f);
+    t.voicing.assign(20, 1.0f);
+    m.setAnalysis(t, { makeNote(0.05, 0.15, 57.0f) });
+
+    CHECK_FALSE(m.drawPitch(20, { 60.0f }));        // 範囲外
+    CHECK_FALSE(m.drawPitch(0, { std::nanf("") })); // 不正な値
+
+    REQUIRE(m.drawPitch(18, { 60.0f, 60.0f, 60.0f, 60.0f }));
+    CHECK(m.drawing().totalFrames() == 2);
+
+    REQUIRE(m.erasePitch(0, 19));
+    CHECK(m.drawing().totalFrames() == 1);
+
+    REQUIRE(m.undo());
+    CHECK(m.drawing().totalFrames() == 2);
+    REQUIRE(m.undo());
+    CHECK(m.drawing().empty());
+    REQUIRE(m.redo());
+    CHECK(m.drawing().totalFrames() == 2);
+
+    // resetAll は手描きも消す
+    REQUIRE(m.resetAll());
+    CHECK(m.drawing().empty());
+}
+
+TEST_CASE("手描きの区間が壊れた保存データは拒否される")
+{
+    EditModel m;
+    PitchTrack t;
+    t.hopSec = 0.01;
+    t.f0Hz.assign(10, 220.0f);
+    t.voicing.assign(10, 1.0f);
+    m.setAnalysis(t, { makeNote(0.02, 0.08, 57.0f) });
+    REQUIRE(m.drawPitch(8, { 60.0f, 60.0f }));
+
+    auto bytes = m.serialize();
+    // 最後の区間（開始 4 + 長さ 4 + 値 8）の開始フレームを、ピッチ曲線の範囲の外にする
+    const auto startOffset = bytes.size() - 16;
+    bytes[startOffset] = 9;
+    CHECK_FALSE(EditModel::deserialize(bytes.data(), bytes.size()).has_value());
+}
+
+TEST_CASE("頭・尻の除外時間が範囲外の編集は拒否される")
+{
+    auto m = makeModel();
+    auto edit = m.notes()[0].edit;
+    edit.attackHoldSec = 0.6f;
+    CHECK_FALSE(m.setNoteEdit(m.notes()[0].id, edit));
+    edit.attackHoldSec = -0.1f;
+    CHECK_FALSE(m.setNoteEdit(m.notes()[0].id, edit));
 }
 
 TEST_CASE("タイミング編集の範囲は保存・復元できる")

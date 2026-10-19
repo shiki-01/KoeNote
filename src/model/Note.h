@@ -36,14 +36,24 @@ struct NoteEdit
     // このノートの直後から次のノートの子音部までの区間（ブレスなど）のゲイン（dB。F-10）
     float breathGainDb = 0.0f;
 
+    // --- MIX 向け（保存形式 v4 で追加）---
+    // ピッチ中心の補正（centerCorrection）を弱める、ノートの頭・尻の時間（秒。F-23）。頭は開始から attackHoldSec かけて、
+    // 尻は終了の releaseHoldSec 前から、補正の強さを 0 ↔ 1 で滑らかに変える。しゃくり・フォールを残すのに使う。
+    float attackHoldSec = 0.0f;
+    float releaseHoldSec = 0.0f;
+    // このノートに属する歯擦音（サ行などの無声の高域成分）のゲイン（dB。F-24）
+    float sibilanceGainDb = 0.0f;
+
+    static constexpr float kMaxHoldSec = 0.5f;
+
     bool hasTimingEdit() const noexcept { return targetStartSec >= 0.0 && targetEndSec >= 0.0; }
 
-    // 既定値（音に影響する編集が何もない）か
+    // 既定値（音に影響する編集が何もない）か。attackHoldSec・releaseHoldSec は centerCorrection と組み合わせたときだけ音に影響する。
     bool isDefault() const noexcept
     {
         return pitchOffsetCents == 0.0f && centerCorrection == 0.0f && vibratoScale == 1.0f && driftScale == 1.0f
                && ! hasTimingEdit() && gainDb == 0.0f && formantShiftCents == 0.0f && consonantGainDb == 0.0f
-               && breathGainDb == 0.0f;
+               && breathGainDb == 0.0f && sibilanceGainDb == 0.0f;
     }
 };
 
@@ -72,6 +82,10 @@ struct ModelSettings
     bool timingRangeActive = false;
     double timingRangeStartSec = 0.0;
     double timingRangeEndSec = 0.0;
+    // スナップ先からこのセント以上ずれたノートを強調表示する（F-28。0 = 表示しない。保存形式 v4）
+    std::uint8_t deviationThresholdCents = 0;
+
+    static constexpr std::uint8_t kMaxDeviationThresholdCents = 100;
 };
 
 // 解析で得られたノート（元音声の時間軸）と、その編集内容

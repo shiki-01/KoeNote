@@ -2,6 +2,7 @@
 
 #include "model/ModelVersion.h"
 #include "model/Note.h"
+#include "model/PitchDrawing.h"
 #include "model/PitchTrack.h"
 
 #include <cstddef>
@@ -54,8 +55,17 @@ public:
     bool moveBoundary(NoteId id, double newBoundarySec);
     // ノートの編集内容を初期状態に戻す
     bool resetNote(NoteId id);
-    // 全ノートの編集内容を初期状態に戻す
+    // 全ノートの編集内容と手描きのピッチ曲線を初期状態に戻す
     bool resetAll();
+
+    //==========================================================================
+    // 手描きのピッチ曲線（F-22。Undo の対象）。フレームは PitchTrack のフレーム。
+    const PitchDrawing& drawing() const noexcept { return pitchDrawing; }
+    // firstFrame から midi（MIDI ノート番号）を描く。PitchTrack の範囲を超える分は切り捨てる。
+    bool drawPitch(std::size_t firstFrame, const std::vector<float>& midi);
+    // [firstFrame, endFrame) の手描きを消す
+    bool erasePitch(std::size_t firstFrame, std::size_t endFrame);
+    bool clearDrawing();
 
     //==========================================================================
     // Undo / Redo
@@ -100,9 +110,10 @@ private:
         NoteId nextId = 1;
         std::vector<TargetNote> targets;
         std::vector<std::pair<NoteId, int>> assignments;
+        PitchDrawing drawing;
     };
 
-    Snapshot makeSnapshot() const { return { noteList, nextNoteId, targetList, assignmentList }; }
+    Snapshot makeSnapshot() const { return { noteList, nextNoteId, targetList, assignmentList, pitchDrawing }; }
     void restore(const Snapshot& s);
     static bool isValid(const std::vector<Note>& notes) noexcept;
 
@@ -117,6 +128,7 @@ private:
     NoteId nextNoteId = 1;
     std::vector<TargetNote> targetList;
     std::vector<std::pair<NoteId, int>> assignmentList;
+    PitchDrawing pitchDrawing;
     ModelSettings modelSettings;
     std::uint64_t revisionCounter = 0;
 

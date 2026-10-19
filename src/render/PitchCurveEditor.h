@@ -1,6 +1,7 @@
 #pragma once
 
 #include "model/Note.h"
+#include "model/PitchDrawing.h"
 #include "model/PitchTrack.h"
 
 #include <vector>
@@ -18,7 +19,11 @@ namespace koenote::render
 //   新しい偏差 = driftScale * (1 - centerCorrection) * drift + vibratoScale * vibrato + residual
 // とする。補正量 = pitchOffsetCents + (新しい偏差 - dev)。
 // 既定値（無編集）では補正量は 0 になる。隣接するノートの境界は transitionSmoothness に応じて滑らかにつなぐ。
-std::vector<float> computePitchAdjustCents(const model::PitchTrack& track, const std::vector<model::Note>& notes);
+// centerCorrection は、ノートの頭の attackHoldSec・尻の releaseHoldSec では 0 から滑らかに効かせる（F-23）。
+// drawing があれば、描いた区間の有声フレームは描いた音高になるように置き換える（F-22。端は 20 ms でつなぐ）。
+std::vector<float> computePitchAdjustCents(const model::PitchTrack& track,
+                                          const std::vector<model::Note>& notes,
+                                          const model::PitchDrawing* drawing = nullptr);
 
 // フレームごとのフォルマントのシフト量（セント。F-09）。ノート内では
 //   formantShiftCents + formantFollow * pitchAdjustCents[frame]

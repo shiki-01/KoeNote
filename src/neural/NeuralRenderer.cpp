@@ -2,6 +2,7 @@
 
 #include "dsp/Resample.h"
 #include "render/GainEnvelope.h"
+#include "render/Sibilance.h"
 #include "render/PitchCurveEditor.h"
 #include "render/TimeMap.h"
 
@@ -245,6 +246,12 @@ render::RenderedAudio renderNeural(const render::RenderInput& input,
             mono[i] += input.channels[c][i] * monoGain;
 
     const auto wave = dsp::resample(mono, srcRate, mc.sampleRate);
+
+    // 歯擦音（F-24）は、ゲインが設定されているときだけ検出する（元のサンプルレートの音声で）
+    std::vector<float> sibilance;
+    if (render::hasSibilanceEdits(notes))
+        sibilance = render::detectSibilance(mono.data(), mono.size(), srcRate, track);
+
     mono.clear();
 
     if (progress && ! progress(0.02f))
@@ -265,7 +272,7 @@ render::RenderedAudio renderNeural(const render::RenderInput& input,
 
     // 3. 出力時間軸のフレーム列（時間伸縮・フォルマント・ピッチ）
     const auto timeMap = render::TimeMap::fromNotes(notes, 0.06, input.pins);
-    const auto adjust = render::computePitchAdjustCents(track, notes);
+    const auto adjust = render::computePitchAdjustCents(track, notes, input.drawing);
     const auto formant = render::computeFormantShiftCents(track, notes, adjust);
 
     const double srcDuration = static_cast<double>(input.numFrames) / srcRate;
@@ -342,7 +349,7 @@ render::RenderedAudio renderNeural(const render::RenderInput& input,
     const auto numOut = std::min(out.size(), static_cast<std::size_t>(std::ceil(outDuration * srcRate)) + 1);
     out.resize(numOut);
 
-    const render::GainEnvelope gains(notes, outDuration);
+    const render::GainEnvelope gains(notes, outDuration, { &sibilance, &track, &timeMap });
     if (! gains.isUnity())
         for (std::size_t i = 0; i < out.size(); ++i)
             out[i] *= gains.gainAt(static_cast<double>(i) / srcRate);

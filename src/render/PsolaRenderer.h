@@ -1,6 +1,7 @@
 #pragma once
 
 #include "model/Note.h"
+#include "model/PitchDrawing.h"
 #include "model/PitchTrack.h"
 #include "render/TimeMap.h"
 
@@ -20,6 +21,7 @@ struct RenderInput
     const model::PitchTrack* track = nullptr;
     const std::vector<model::Note>* notes = nullptr;
     TimeMap::Pins pins; // タイミング編集の範囲の固定
+    const model::PitchDrawing* drawing = nullptr; // 手描きのピッチ曲線（F-22。任意）
 };
 
 // レンダリング結果。出力時間軸（元音声の先頭 = 0）の音声。
@@ -40,6 +42,7 @@ using RenderProgress = std::function<bool(float)>;
 
 // 編集内容（ピッチ・タイミング）を反映するかを判定する。false なら元音声をそのまま使える。
 bool hasAudibleEdits(const std::vector<model::Note>& notes) noexcept;
+bool hasAudibleEdits(const std::vector<model::Note>& notes, const model::PitchDrawing* drawing) noexcept;
 
 // TD-PSOLA によるピッチ変更とタイムストレッチ（要件 5章「レンダリング層」・標準方式）。
 // ピッチマークはモノラル化した音声から求め、全チャンネルに共通で使う。

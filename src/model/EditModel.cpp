@@ -20,7 +20,8 @@ bool sameEdit(const NoteEdit& a, const NoteEdit& b) noexcept
            && a.transitionSmoothness == b.transitionSmoothness && a.targetStartSec == b.targetStartSec
            && a.targetEndSec == b.targetEndSec && a.gainDb == b.gainDb && a.formantShiftCents == b.formantShiftCents
            && a.formantFollow == b.formantFollow && a.consonantGainDb == b.consonantGainDb
-           && a.breathGainDb == b.breathGainDb;
+           && a.breathGainDb == b.breathGainDb && a.attackHoldSec == b.attackHoldSec
+           && a.releaseHoldSec == b.releaseHoldSec && a.sibilanceGainDb == b.sibilanceGainDb;
 }
 
 void writeNote(ByteWriter& w, const Note& n)
@@ -43,11 +44,16 @@ void writeNote(ByteWriter& w, const Note& n)
     w.writeF32(n.edit.formantFollow);
     w.writeF32(n.edit.consonantGainDb);
     w.writeF32(n.edit.breathGainDb);
+    // v4 で追加
+    w.writeF32(n.edit.attackHoldSec);
+    w.writeF32(n.edit.releaseHoldSec);
+    w.writeF32(n.edit.sibilanceGainDb);
 }
 
 // 1 ノートあたりの保存サイズ（id 8 + 区間 16 + midi/level 8 + 編集 float 5 個 20 + 目標区間 16）。v2 は float 5 個が加わる。
 constexpr std::size_t kSerialisedNoteBytesV1 = 8 + 16 + 8 + 20 + 16;
 constexpr std::size_t kSerialisedNoteBytesV2 = kSerialisedNoteBytesV1 + 20;
+constexpr std::size_t kSerialisedNoteBytesV4 = kSerialisedNoteBytesV2 + 12;
 
 Note readNote(ByteReader& r, std::uint32_t version)
 {
@@ -72,6 +78,13 @@ Note readNote(ByteReader& r, std::uint32_t version)
         n.edit.formantFollow = r.readF32();
         n.edit.consonantGainDb = r.readF32();
         n.edit.breathGainDb = r.readF32();
+    }
+
+    if (version >= 4)
+    {
+        n.edit.attackHoldSec = r.readF32();
+        n.edit.releaseHoldSec = r.readF32();
+        n.edit.sibilanceGainDb = r.readF32();
     }
 
     return n;
@@ -113,6 +126,7 @@ void EditModel::setAnalysis(PitchTrack newTrack, std::vector<Note> newNotes)
 
     targetList.clear();
     assignmentList.clear();
+    pitchDrawing.clear();
 
     analysed = true;
     undoStack.clear();
@@ -134,7 +148,11 @@ bool EditModel::isValid(const std::vector<Note>& notes) noexcept
             || ! finite(n.edit.targetStartSec) || ! finite(n.edit.targetEndSec) || ! finite(n.edit.gainDb)
             || ! finite(n.edit.formantShiftCents) || ! finite(n.edit.formantFollow) || ! finite(n.edit.consonantGainDb)
             || ! finite(n.edit.breathGainDb) || ! finite(n.edit.centerCorrection) || ! finite(n.edit.vibratoScale)
-            || ! finite(n.edit.driftScale) || ! finite(n.edit.transitionSmoothness))
+            || ! finite(n.edit.driftScale) || ! finite(n.edit.transitionSmoothness) || ! finite(n.edit.sibilanceGainDb))
+            return false;
+
+        if (! (n.edit.attackHoldSec >= 0.0f && n.edit.attackHoldSec <= NoteEdit::kMaxHoldSec)
+            || ! (n.edit.releaseHoldSec >= 0.0f && n.edit.releaseHoldSec <= NoteEdit::kMaxHoldSec))
             return false;
 
         // 目標区間は開始・終了が揃って設定されているか、揃って未設定
@@ -165,6 +183,7 @@ void EditModel::restore(const Snapshot& s)
     nextNoteId = s.nextId;
     targetList = s.targets;
     assignmentList = s.assignments;
+    pitchDrawing = s.drawing;
 }
 
 void EditModel::beginEdit()
@@ -225,7 +244,8 @@ bool EditModel::mutate(Fn&& mutator)
 
     // 内容が変わっていなければ履歴に積まない
     bool changed = before.notes.size() != noteList.size() || before.nextId != nextNoteId
-                   || before.assignments != assignmentList || before.targets.size() != targetList.size();
+                   || before.assignments != assignmentList || before.targets.size() != targetList.size()
+                   || ! (before.drawing == pitchDrawing);
 
     for (std::size_t i = 0; i < targetList.size() && ! changed; ++i)
     {
@@ -407,8 +427,37 @@ bool EditModel::resetAll()
     {
         for (auto& n : noteList)
             n.edit = NoteEdit {};
+        pitchDrawing.clear();
         return true;
     });
+}
+
+bool EditModel::drawPitch(std::size_t firstFrame, const std::vector<float>& midi)
+{
+    if (firstFrame >= track.size() || midi.empty())
+        return false;
+
+    const auto count = std::min(midi.size(), track.size() - firstFrame);
+    const std::vector<float> values(midi.begin(), midi.begin() + static_cast<std::ptrdiff_t>(count));
+
+    if (! std::all_of(values.begin(), values.end(), [] (float v) { return std::isfinite(v) && v > 0.0f && v < 140.0f; }))
+        return false;
+
+    return mutate([&] { pitchDrawing.draw(static_cast<std::uint32_t>(firstFrame), values); return true; });
+}
+
+bool EditModel::erasePitch(std::size_t firstFrame, std::size_t endFrame)
+{
+    if (endFrame <= firstFrame)
+        return false;
+
+    const auto clampFrame = [&] (std::size_t f) { return static_cast<std::uint32_t>(std::min<std::size_t>(f, 0xFFFFFFFFu)); };
+    return mutate([&] { pitchDrawing.erase(clampFrame(firstFrame), clampFrame(endFrame)); return true; });
+}
+
+bool EditModel::clearDrawing()
+{
+    return mutate([&] { pitchDrawing.clear(); return true; });
 }
 
 bool EditModel::applyEdits(const std::vector<std::pair<NoteId, NoteEdit>>& edits)
@@ -528,7 +577,7 @@ void EditModel::setSettings(const ModelSettings& s)
     if (s.renderMode == modelSettings.renderMode && s.snapMode == modelSettings.snapMode && s.keyRoot == modelSettings.keyRoot
         && s.keyMinor == modelSettings.keyMinor && s.gridDivision == modelSettings.gridDivision && s.manualBpm == modelSettings.manualBpm
         && s.timingRangeActive == modelSettings.timingRangeActive && s.timingRangeStartSec == modelSettings.timingRangeStartSec
-        && s.timingRangeEndSec == modelSettings.timingRangeEndSec)
+        && s.timingRangeEndSec == modelSettings.timingRangeEndSec && s.deviationThresholdCents == modelSettings.deviationThresholdCents)
         return;
 
     modelSettings = s;
@@ -606,6 +655,17 @@ std::vector<std::uint8_t> EditModel::serialize() const
     w.writeF64(modelSettings.timingRangeStartSec);
     w.writeF64(modelSettings.timingRangeEndSec);
 
+    // v4: ずれの表示のしきい値、手描きのピッチ曲線
+    w.writeU8(modelSettings.deviationThresholdCents);
+    w.writeU64(pitchDrawing.segments().size());
+    for (const auto& s : pitchDrawing.segments())
+    {
+        w.writeU32(s.startFrame);
+        w.writeU32(static_cast<std::uint32_t>(s.midi.size()));
+        for (const auto v : s.midi)
+            w.writeF32(v);
+    }
+
     return w.release();
 }
 
@@ -641,7 +701,7 @@ std::optional<EditModel> EditModel::deserialize(const std::uint8_t* data, std::s
         v = r.readF32();
 
     const auto count = r.readU64();
-    if (! r.plausibleCount(count, version >= 2 ? kSerialisedNoteBytesV2 : kSerialisedNoteBytesV1))
+    if (! r.plausibleCount(count, version >= 4 ? kSerialisedNoteBytesV4 : (version >= 2 ? kSerialisedNoteBytesV2 : kSerialisedNoteBytesV1)))
         return std::nullopt;
 
     m.noteList.reserve(static_cast<std::size_t>(count));
@@ -692,10 +752,46 @@ std::optional<EditModel> EditModel::deserialize(const std::uint8_t* data, std::s
             m.modelSettings.timingRangeEndSec = r.readF64();
         }
 
+        if (version >= 4)
+        {
+            m.modelSettings.deviationThresholdCents = r.readU8();
+
+            const auto segmentCount = r.readU64();
+            if (! r.plausibleCount(segmentCount, 12))
+                return std::nullopt;
+
+            std::vector<PitchDrawing::Segment> segments;
+            segments.reserve(static_cast<std::size_t>(segmentCount));
+
+            for (std::uint64_t i = 0; i < segmentCount; ++i)
+            {
+                PitchDrawing::Segment s;
+                s.startFrame = r.readU32();
+                const auto length = r.readU32();
+
+                if (r.failed() || ! r.plausibleCount(length, 4))
+                    return std::nullopt;
+
+                s.midi.resize(length);
+                for (auto& v : s.midi)
+                    v = r.readF32();
+
+                // ピッチ曲線の範囲を超える区間は不正
+                if (static_cast<std::uint64_t>(s.startFrame) + length > m.track.f0Hz.size())
+                    return std::nullopt;
+
+                segments.push_back(std::move(s));
+            }
+
+            if (! PitchDrawing::fromSegments(std::move(segments), m.pitchDrawing))
+                return std::nullopt;
+        }
+
         // 設定値の範囲を検査する（壊れたデータで UI が不正な状態にならないように）
         auto& s = m.modelSettings;
         if (s.renderMode > 1 || s.snapMode > 2 || s.keyRoot > 11 || s.keyMinor > 1 || s.gridDivision > 3 || ! std::isfinite(s.manualBpm)
             || s.manualBpm < 0.0f || s.manualBpm > 999.0f || ! std::isfinite(s.timingRangeStartSec) || ! std::isfinite(s.timingRangeEndSec)
+            || s.deviationThresholdCents > ModelSettings::kMaxDeviationThresholdCents
             || (s.timingRangeActive && ! (s.timingRangeStartSec >= 0.0 && s.timingRangeEndSec > s.timingRangeStartSec)))
             s = ModelSettings {};
     }

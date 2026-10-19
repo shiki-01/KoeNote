@@ -41,7 +41,9 @@ std::vector<double> movingAverage(const std::vector<double>& value, const std::v
 }
 } // namespace
 
-std::vector<float> computePitchAdjustCents(const model::PitchTrack& track, const std::vector<model::Note>& notes)
+std::vector<float> computePitchAdjustCents(const model::PitchTrack& track,
+                                          const std::vector<model::Note>& notes,
+                                          const model::PitchDrawing* drawing)
 {
     std::vector<float> adjust(track.size(), 0.0f);
 
@@ -83,8 +85,25 @@ std::vector<float> computePitchAdjustCents(const model::PitchTrack& track, const
         const auto drift = movingAverage(dev, voiced, driftHalf);
         const auto fine = movingAverage(dev, voiced, fineHalf);
 
-        const double driftGain = static_cast<double>(note.edit.driftScale) * (1.0 - static_cast<double>(note.edit.centerCorrection));
+        const double driftScale = static_cast<double>(note.edit.driftScale);
+        const double correction = static_cast<double>(note.edit.centerCorrection);
         const double vibratoGain = static_cast<double>(note.edit.vibratoScale);
+        const double attack = std::clamp(static_cast<double>(note.edit.attackHoldSec), 0.0, static_cast<double>(model::NoteEdit::kMaxHoldSec));
+        const double release = std::clamp(static_cast<double>(note.edit.releaseHoldSec), 0.0, static_cast<double>(model::NoteEdit::kMaxHoldSec));
+
+        // ノートの頭・尻（F-23）では、ピッチ中心の補正を 0 から滑らかに効かせる
+        const auto correctionAt = [&] (double sec)
+        {
+            double weight = 1.0;
+
+            if (attack > 0.0)
+                weight = std::min(weight, std::clamp((sec - note.startSec) / attack, 0.0, 1.0));
+            if (release > 0.0)
+                weight = std::min(weight, std::clamp((note.endSec - sec) / release, 0.0, 1.0));
+
+            weight = weight * weight * (3.0 - 2.0 * weight); // smoothstep
+            return correction * weight;
+        };
 
         for (std::size_t i = 0; i < count; ++i)
         {
@@ -92,6 +111,7 @@ std::vector<float> computePitchAdjustCents(const model::PitchTrack& track, const
 
             if (voiced[i])
             {
+                const double driftGain = driftScale * (1.0 - correctionAt(track.timeOf(static_cast<std::size_t>(first) + i)));
                 const double vibrato = fine[i] - drift[i];
                 const double residual = dev[i] - fine[i];
                 const double newDev = driftGain * drift[i] + vibratoGain * vibrato + residual;
@@ -129,6 +149,31 @@ std::vector<float> computePitchAdjustCents(const model::PitchTrack& track, const
             const double u = static_cast<double>(f - f0) / static_cast<double>(f1 - f0);
             const double s = 0.5 - 0.5 * std::cos(kPi * u);
             adjust[static_cast<std::size_t>(f)] = static_cast<float>(left + (right - left) * s);
+        }
+    }
+
+    // 手描きのピッチ曲線（F-22）。描いた区間の有声フレームは、描いた音高になるように置き換える。
+    // 区間の端は kDrawFadeFrames で、ノートの編集から求めた補正量となめらかにつなぐ。
+    if (drawing != nullptr && ! drawing->empty())
+    {
+        constexpr double kDrawFadeFrames = 4.0; // 20 ms（hop 5 ms）
+
+        for (const auto& segment : drawing->segments())
+        {
+            const auto length = segment.midi.size();
+
+            for (std::size_t k = 0; k < length; ++k)
+            {
+                const std::size_t f = segment.startFrame + k;
+
+                if (f >= track.size() || ! track.isVoiced(f))
+                    continue;
+
+                const double drawn = (static_cast<double>(segment.midi[k]) - toMidi(track.f0Hz[f])) * 100.0;
+                const double edge = std::min(static_cast<double>(k) + 1.0, static_cast<double>(length - k));
+                const double weight = std::min(1.0, edge / kDrawFadeFrames);
+                adjust[f] = static_cast<float>(static_cast<double>(adjust[f]) + (drawn - static_cast<double>(adjust[f])) * weight);
+            }
         }
     }
 
