@@ -53,13 +53,13 @@ VST は Steinberg Media Technologies GmbH の登録商標です。
 
 ## ONNX Runtime（C API ヘッダのみ同梱）
 
-- 用途: ニューラル加工（F-17）の推論。ヘッダ （onnxruntime_c_api.h ほか、v1.31.0）をコンパイルに使う。
-   本体は同梱せず、利用者が配置したものを実行時に読み込む。
+- 用途: ニューラル加工（F-17）の推論。ヘッダ（`third_party/onnxruntime/` の onnxruntime_c_api.h ほか、v1.31.0）をコンパイルに使う。
+  `onnxruntime.dll` 本体は同梱せず、利用者が配置したものを実行時に読み込む。
 - 著作権: Copyright (c) Microsoft Corporation
-- ライセンス: MIT License（）
+- ライセンス: MIT License（`third_party/onnxruntime/LICENSE`）
 - https://github.com/microsoft/onnxruntime
 
 ## 学習済みモデル
 
-モデルの重みは同梱していません。ニューラル加工（F-17）は、利用者が任意で配置したボコーダー（例: DiffSinger Community Vocoder の PC-NSF-HiFiGAN、CC BY-NC-SA 4.0）を読み込みます。将来モデルを同梱・利用する場合は、ここにモデル名・配布元・ライセンスを追記します。
+モデルの重みは同梱していません。ニューラル加工（F-17）は、利用者が任意で配置したボコーダー（例: DiffSinger Community Vocoder の PC-NSF-HiFiGAN、CC BY-NC-SA 4.0）を読み込みます。モデルを同梱する場合は、ここにモデル名・配布元・ライセンスを追記します。
 非商用条件付きの重み（例: PC-NSF-HiFiGAN の公開重み、CC BY-NC-SA 4.0）は本体に同梱せず、利用者が任意で追加する方式とします。
