@@ -299,6 +299,42 @@ void PianoRollView::zoomToFit()
     repaint();
 }
 
+void PianoRollView::showTimeRange(double startSec, double endSec)
+{
+    const auto area = getRollArea();
+    if (area.getWidth() <= 0 || area.getHeight() <= 0 || ! std::isfinite(startSec) || ! std::isfinite(endSec) || endSec <= startSec)
+        return;
+
+    // 前後に 5% の余白を付けて、範囲が横幅に収まるようにする
+    const double margin = (endSec - startSec) * 0.05;
+    viewStartSec = startSec - margin;
+    pixelsPerSec = area.getWidth() / ((endSec - startSec) + 2.0 * margin);
+
+    // 範囲内のノートが見える高さへ（縦のズームは変えない）
+    if (const auto* m = model())
+    {
+        double lowMidi = 200.0, highMidi = 0.0;
+
+        for (const auto& n : m->notes())
+        {
+            if (n.outEndSec() < startSec || n.outStartSec() > endSec)
+                continue;
+
+            lowMidi = std::min<double>(lowMidi, n.targetMidi());
+            highMidi = std::max<double>(highMidi, n.targetMidi());
+        }
+
+        if (highMidi >= lowMidi)
+        {
+            const double visibleRows = area.getHeight() / pixelsPerSemitone;
+            topMidi = (lowMidi + highMidi) * 0.5 + visibleRows * 0.5;
+        }
+    }
+
+    clampView();
+    repaint();
+}
+
 //==============================================================================
 // キャッシュ
 void PianoRollView::refreshView()

@@ -69,6 +69,8 @@ public:
     void resetSelected();
     void selectAll();
     void zoomToFit();
+    // 出力時間軸の [startSec, endSec] が横幅に収まるように表示する（ホストの選択範囲への追従）
+    void showTimeRange(double startSec, double endSec);
 
     // 選択ノートの範囲（出力時間軸の秒）。選択がなければ false。A/B 比較の範囲に使う。
     bool getSelectionRange(double& startSec, double& endSec) const;

@@ -351,6 +351,14 @@ void KoeNoteEditor::onNewSelection(const juce::ARAViewSelection& selection)
     const auto regions = selection.getEffectivePlaybackRegions<juce::ARAPlaybackRegion>();
     selectedRegion = regions.empty() ? nullptr : regions.front();
     refreshTarget();
+
+    // ホストで時間の範囲が選択されていれば、その範囲を表示する（要件 6章「ホストとの選択範囲連動」）
+    if (const ARA::ARAContentTimeRange* range = selection.getTimeRange(); range != nullptr && range->duration > 0.0 && currentRegion != nullptr)
+    {
+        // 再生時間（プロジェクト）→ AudioModification の時間（ピアノロールの時間軸）
+        const double offset = currentRegion->getStartInPlaybackTime() - currentRegion->getStartInAudioModificationTime();
+        roll.showTimeRange(range->start - offset, range->start + range->duration - offset);
+    }
 }
 
 plugin::KoeNoteAudioModification* KoeNoteEditor::findModification(juce::ARAPlaybackRegion** regionOut) const
