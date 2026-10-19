@@ -1,2 +1,30 @@
+# ビルド成果物
+/build/
+/out/
+/cmake-build-*/
+*.user
+*.suo
+.vs/
+CMakeUserPresets.json
+
+# 学習済みモデルの重み（リポジトリに含めない。要件定義書 9章）
+*.onnx
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.bin
+/models/
+
+# 評価用データ・生成物
+/tools/eval/data/
+/tools/eval/out/
+__pycache__/
+*.pyc
+.venv/
+
 # Claude Code: 外部モデル送信の許可フラグ（ローカル設定）
 .claude/allow-external-llm
+
+# ビルドログ
+*.log
