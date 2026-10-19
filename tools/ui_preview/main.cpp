@@ -102,9 +102,57 @@ void writePng(juce::Component& c, const juce::File& file)
 }
 } // namespace
 
+// 3 分の音声で、解析とレンダリングの所要時間を計測する（要件 4章「解析速度」）
+int runPerformance()
+{
+    const std::vector<NoteSpec> specs {
+        { 0.30, 1.00, 261.63, 20.0, 0.0 }, { 1.10, 1.70, 293.66, 15.0, 0.0 }, { 1.80, 2.80, 329.63, 55.0, 0.0 },
+        { 3.00, 3.80, 392.00, 25.0, 329.63 }, { 4.70, 5.40, 440.00, 20.0, 0.0 }, { 5.60, 7.00, 349.23, 40.0, 0.0 },
+    };
+
+    const auto one = synthesise(specs, 7.5);
+    std::vector<float> audio;
+    for (int i = 0; i < 24; ++i) // 7.5 秒 x 24 = 180 秒
+        audio.insert(audio.end(), one.begin(), one.end());
+
+    const analysis::MonoAudioView view { audio.data(), audio.size(), kSampleRate };
+    analysis::YinPitchAnalyzer analyzer;
+    analysis::RuleBasedNoteSegmenter segmenter;
+
+    auto t0 = juce::Time::getMillisecondCounterHiRes();
+    auto track = analyzer.analyze(view, {});
+    auto t1 = juce::Time::getMillisecondCounterHiRes();
+    auto notes = segmenter.segment(track, view);
+    auto t2 = juce::Time::getMillisecondCounterHiRes();
+
+    std::cout << "audio: 180 s, analysis: " << (t1 - t0) << " ms, segmentation: " << (t2 - t1) << " ms, notes: " << notes.size() << '\n';
+
+    model::EditModel m;
+    m.setAnalysis(std::move(track), std::move(notes));
+    for (std::size_t i = 0; i < m.notes().size(); i += 2)
+        m.setNotePitchOffset(m.notes()[i].id, 100.0f);
+
+    const float* ptr = audio.data();
+    render::RenderInput input;
+    input.channels = &ptr;
+    input.numChannels = 1;
+    input.numFrames = static_cast<std::int64_t>(audio.size());
+    input.sampleRate = kSampleRate;
+    input.track = &m.pitchTrack();
+    input.notes = &m.notes();
+
+    auto t3 = juce::Time::getMillisecondCounterHiRes();
+    const auto rendered = render::renderEditedAudio(input);
+    std::cout << "render (mono, " << m.notes().size() << " notes): " << (juce::Time::getMillisecondCounterHiRes() - t3) << " ms, frames " << rendered.numFrames() << '\n';
+    return 0;
+}
+
 int main(int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
+
+    if (argc > 1 && juce::String(argv[1]) == "--perf")
+        return runPerformance();
 
     const juce::File outDir = argc > 1 ? juce::File::getCurrentWorkingDirectory().getChildFile(argv[1]) : juce::File::getCurrentWorkingDirectory();
     outDir.createDirectory();
