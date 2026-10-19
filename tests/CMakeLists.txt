@@ -26,3 +26,7 @@ endif()
 
 # テスト名が日本語のため、catch_discover_tests（コマンドライン経由の個別実行）は使わず、全体を 1 つの test として実行する
 add_test(NAME koenote_tests COMMAND koenote_tests)
+
+if(KOENOTE_BUILD_PLUGIN)
+    add_subdirectory(engine)
+endif()

@@ -19,6 +19,9 @@ juce_add_plugin(KoeNote
     COPY_PLUGIN_AFTER_BUILD ${KOENOTE_COPY_PLUGIN})
 
 target_sources(KoeNote PRIVATE
+    ISourceAudio.h
+    RenderEngine.h
+    RenderEngine.cpp
     KoeNoteAudioModification.h
     KoeNoteAudioModification.cpp
     KoeNoteAudioSource.h

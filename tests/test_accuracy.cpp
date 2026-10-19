@@ -101,6 +101,7 @@ Singer makeSinger(unsigned seed, double sr, int numNotes, bool noisy, double low
 
     double phase = 0.0;
     std::size_t noteIndex = 0;
+    std::vector<double> envelope;
 
     for (std::size_t i = 0; i < n; ++i)
     {
@@ -113,16 +114,30 @@ Singer makeSinger(unsigned seed, double sr, int numNotes, bool noisy, double low
 
         phase += 2.0 * std::numbers::pi * f0[i] / sr;
         const auto& vowel = vowels[noteIndex];
-        double v = 0.0;
 
-        for (int h = 1; h * f0[i] < 0.45 * sr && h <= 40; ++h)
+        // スペクトル包絡は 64 サンプルごとに計算して使い回す（exp の呼び出しを減らして、テストを速くする）
+        if (i % 64 == 0 || envelope.empty())
         {
-            const double f = h * f0[i];
-            double env = 0.0;
-            for (const double formant : vowel)
-                env += std::exp(-0.5 * std::pow((f - formant) / 350.0, 2.0));
-            env = env / (1.0 + 0.0006 * f) + 0.02;
-            v += env * std::sin(phase * h);
+            envelope.assign(41, 0.0);
+            for (int h = 1; h <= 40; ++h)
+            {
+                const double f = h * f0[i];
+                double env = 0.0;
+                for (const double formant : vowel)
+                    env += std::exp(-0.5 * std::pow((f - formant) / 350.0, 2.0));
+                envelope[static_cast<std::size_t>(h)] = (env / (1.0 + 0.0006 * f) + 0.02) * (f < 0.45 * sr ? 1.0 : 0.0);
+            }
+        }
+
+        // sin(h * phase) を漸化式（s[h+1] = 2 cos(phase) s[h] - s[h-1]）で求める
+        const double c2 = 2.0 * std::cos(phase);
+        double sPrev = 0.0, sCur = std::sin(phase), v = 0.0;
+        for (int h = 1; h <= 40; ++h)
+        {
+            v += envelope[static_cast<std::size_t>(h)] * sCur;
+            const double sNext = c2 * sCur - sPrev;
+            sPrev = sCur;
+            sCur = sNext;
         }
 
         s.audio[i] = static_cast<float>(amp[i] * v / 3.0);

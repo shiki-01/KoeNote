@@ -34,6 +34,7 @@ endif()
 
 if(KOENOTE_BUILD_PLUGIN AND KOENOTE_BUILD_TOOLS)
     add_subdirectory(tools/ui_preview)
+    add_subdirectory(tools/analyze)
 endif()
 
 if(KOENOTE_BUILD_TESTS)

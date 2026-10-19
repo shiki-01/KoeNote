@@ -1,5 +1,6 @@
 #pragma once
 
+#include "plugin/ISourceAudio.h"
 #include "plugin/SourceAudioData.h"
 #include "render/ProcessingGate.h"
 
@@ -17,6 +18,7 @@ namespace koenote::plugin
 // ARAAudioSource の拡張。サンプルアクセスが有効になった時点で、別スレッドが全サンプルを読み込む。
 // オーディオスレッドは読み込み済みのデータだけを参照し、ホストの reader には触れない。
 class KoeNoteAudioSource final : public juce::ARAAudioSource,
+                                 public ISourceAudio,
                                  private juce::AsyncUpdater
 {
 public:
@@ -35,10 +37,10 @@ public:
     void stopLoading();
 
     // オーディオスレッド用。ProcessingGate の ReadScope 内でのみ使うこと。未読み込みなら nullptr。
-    const SourceAudioData* audioForPlayback() const noexcept { return published.load(std::memory_order_acquire); }
+    const SourceAudioData* audioForPlayback() const noexcept override { return published.load(std::memory_order_acquire); }
 
     // message thread / worker thread 用。所有権を共有して取得する。
-    std::shared_ptr<const SourceAudioData> sharedAudio() const;
+    std::shared_ptr<const SourceAudioData> sharedAudio() const override;
 
     bool isLoaded() const noexcept { return published.load(std::memory_order_acquire) != nullptr; }
 
