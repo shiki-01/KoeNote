@@ -15,7 +15,7 @@ public:
         float fMinHz = 65.0f;
         float fMaxHz = 1100.0f;
         double hopSec = 0.005;
-        float voicedThreshold = 0.25f; // 選ばれた候補の d' がこれを超えるフレームは無声
+        float voicedThreshold = 0.35f; // 選ばれた候補の d' がこれを超えるフレームは無声
         float silenceDb = -55.0f;      // フレーム RMS がこれ未満（dBFS）なら無声固定
     };
 

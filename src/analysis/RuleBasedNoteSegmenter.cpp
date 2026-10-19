@@ -16,6 +16,11 @@ constexpr float kSplitDeviationSemitone = 0.7f;
 constexpr double kSplitMinSec = 0.050;       // 中心から外れた状態がこれ以上続いたら分割する
 constexpr double kShortNoteSec = 0.060;      // これ未満のノートは隣へ併合する
 constexpr double kEpsSec = 1e-9;
+constexpr double kBridgeDipDb = 8.0;         // 無声の隙間の音量がこれ以上（dB）落ち込む場合は、橋渡しせず別のノートにする
+constexpr double kSplitDipDb = 9.0;          // 有声区間内で、音量がこれ以上（dB）落ち込む谷は、ノートの境界にする
+constexpr double kDipWindowSec = 0.080;      // 谷の前後の山を探す範囲
+constexpr double kMinDipSpacingSec = 0.060;  // 谷同士の最小の間隔
+constexpr float kBoundaryDeviationSemitone = 0.4f; // 音高の変化の開始位置を探すときの、元の中心からの偏差
 constexpr std::size_t kNone = std::numeric_limits<std::size_t>::max();
 
 // フレーム番号の閉区間 [first, last]
@@ -99,6 +104,117 @@ float rmsLevel(const MonoAudioView& audio, double startSec, double endSec)
     const double rms = std::sqrt(ss / static_cast<double>(i1 - i0));
     return std::clamp(static_cast<float>(rms), 0.0f, 1.0f);
 }
+
+// フレームごとの音量（dB）。フレーム時刻の前後 1 hop の RMS。音声がなければ空。
+std::vector<float> frameEnergyDb(const model::PitchTrack& track, const MonoAudioView& audio)
+{
+    std::vector<float> db;
+    if (audio.samples == nullptr || audio.numSamples == 0 || !(audio.sampleRate > 0.0))
+    {
+        return db;
+    }
+    db.resize(track.size());
+    for (std::size_t i = 0; i < track.size(); ++i)
+    {
+        const double t = track.timeOf(i);
+        const float rms = rmsLevel(audio, t - track.hopSec, t + track.hopSec);
+        db[i] = 20.0f * std::log10(std::max(rms, 1.0e-6f));
+    }
+    return db;
+}
+
+// 有声区間を、音量の深い谷で分ける（同じ音高が続くノートの境界は、音高ではなく音量の谷に現れるため）。
+// 谷の底のフレームを中心に、周囲より kSplitDipDb 以上低い連続するフレームは、どのノートにも含めない。
+std::vector<Span> splitAtEnergyDips(Span region, const std::vector<float>& energy, double hop)
+{
+    if (energy.empty())
+    {
+        return { region };
+    }
+
+    // ±2 フレーム（約 ±10 ms）の移動平均で、ピッチ周期やノイズによる細かい揺れを均す
+    std::vector<float> smooth(region.last - region.first + 1);
+    for (std::size_t k = region.first; k <= region.last; ++k)
+    {
+        const std::size_t lo = (k - region.first >= 2) ? k - 2 : region.first;
+        const std::size_t hi = std::min(region.last, k + 2);
+        float sum = 0.0f;
+        for (std::size_t j = lo; j <= hi; ++j)
+        {
+            sum += energy[j];
+        }
+        smooth[k - region.first] = sum / static_cast<float>(hi - lo + 1);
+    }
+
+    const std::size_t win = std::max<std::size_t>(2, static_cast<std::size_t>(std::llround(kDipWindowSec / hop)));
+    const std::size_t spacing = std::max<std::size_t>(1, static_cast<std::size_t>(std::llround(kMinDipSpacingSec / hop)));
+    const std::size_t len = smooth.size();
+
+    std::vector<Span> dips; // 谷（ノートに含めないフレームの閉区間、region 内の相対位置）
+    std::size_t lastDipEnd = 0;
+    bool haveDip = false;
+
+    for (std::size_t k = 1; k + 1 < len; ++k)
+    {
+        if (!(smooth[k] <= smooth[k - 1] && smooth[k] <= smooth[k + 1]))
+        {
+            continue;
+        }
+
+        float leftPeak = smooth[k], rightPeak = smooth[k];
+        for (std::size_t j = (k >= win ? k - win : 0); j <= k; ++j)
+        {
+            leftPeak = std::max(leftPeak, smooth[j]);
+        }
+        for (std::size_t j = k; j <= std::min(len - 1, k + win); ++j)
+        {
+            rightPeak = std::max(rightPeak, smooth[j]);
+        }
+
+        const float peak = std::min(leftPeak, rightPeak);
+        if (peak - smooth[k] < static_cast<float>(kSplitDipDb))
+        {
+            continue;
+        }
+
+        // 谷の幅: 谷底から、「山 - 6 dB」を下回る範囲
+        const float limit = peak - 6.0f;
+        std::size_t b = k, e = k;
+        while (b > 0 && smooth[b - 1] < limit)
+        {
+            --b;
+        }
+        while (e + 1 < len && smooth[e + 1] < limit)
+        {
+            ++e;
+        }
+
+        if (haveDip && b < lastDipEnd + spacing)
+        {
+            continue;
+        }
+
+        dips.push_back({ b, e });
+        lastDipEnd = e;
+        haveDip = true;
+    }
+
+    std::vector<Span> parts;
+    std::size_t begin = 0;
+    for (const Span& d : dips)
+    {
+        if (d.first > begin)
+        {
+            parts.push_back({ region.first + begin, region.first + d.first - 1 });
+        }
+        begin = d.last + 1;
+    }
+    if (begin < len)
+    {
+        parts.push_back({ region.first + begin, region.last });
+    }
+    return parts;
+}
 } // namespace
 
 std::vector<model::Note> RuleBasedNoteSegmenter::segment(const model::PitchTrack& track, const MonoAudioView& audio)
@@ -123,7 +239,10 @@ std::vector<model::Note> RuleBasedNoteSegmenter::segment(const model::PitchTrack
         }
     }
 
-    // 2. 短い無声の連続を線形補間で橋渡しする（両側が有声のものだけ）
+    // フレームごとの音量（dB）。同じ音高のノートの切れ目を、音高の変化ではなく音量の谷から見つけるために使う
+    const std::vector<float> energy = frameEnergyDb(track, audio);
+
+    // 2. 短い無声の連続を線形補間で橋渡しする（両側が有声のものだけ。音量が深く落ち込む隙間は橋渡ししない）
     for (std::size_t i = 0; i < n;)
     {
         if (voiced[i])
@@ -142,6 +261,28 @@ std::vector<model::Note> RuleBasedNoteSegmenter::segment(const model::PitchTrack
         if (!bridgeable)
         {
             continue;
+        }
+        if (!energy.empty())
+        {
+            const std::size_t side = std::min<std::size_t>(4, gapBegin);
+            const std::size_t sideRight = std::min<std::size_t>(4, n - gapEnd);
+            float before = -200.0f, after = -200.0f, lowest = 200.0f;
+            for (std::size_t k = gapBegin - side; k < gapBegin; ++k)
+            {
+                before = std::max(before, energy[k]);
+            }
+            for (std::size_t k = gapEnd; k < gapEnd + sideRight; ++k)
+            {
+                after = std::max(after, energy[k]);
+            }
+            for (std::size_t k = gapBegin; k < gapEnd; ++k)
+            {
+                lowest = std::min(lowest, energy[k]);
+            }
+            if (std::min(before, after) - lowest >= static_cast<float>(kBridgeDipDb))
+            {
+                continue;
+            }
         }
         const float left = midi[gapBegin - 1];
         const float right = midi[gapEnd];
@@ -177,8 +318,28 @@ std::vector<model::Note> RuleBasedNoteSegmenter::segment(const model::PitchTrack
     std::vector<Span> spans; // 時間順・重なりなし
     std::vector<float> smoothed(n, 0.0f);
 
+    // 音量の深い谷で有声区間を分ける
+    std::vector<Span> parts;
     for (const Span& region : regions)
     {
+        for (const Span& part : splitAtEnergyDips(region, energy, hop))
+        {
+            parts.push_back(part);
+        }
+    }
+
+    // 平滑化の弱い版（±2 フレームの median）。音高の変化の開始位置を探すのに使う。
+    std::vector<float> light(n, 0.0f);
+
+    for (const Span& region : parts)
+    {
+        for (std::size_t k = region.first; k <= region.last; ++k)
+        {
+            const std::size_t lo = (k - region.first >= 2) ? k - 2 : region.first;
+            const std::size_t hi = std::min(region.last, k + 2);
+            light[k] = spanMedian(midi, { lo, hi });
+        }
+
         // 3. 移動 median による平滑化
         for (std::size_t k = region.first; k <= region.last; ++k)
         {
@@ -203,10 +364,19 @@ std::vector<model::Note> RuleBasedNoteSegmenter::segment(const model::PitchTrack
                 }
                 if (spanSec({ devFirst, j }, hop) >= kSplitMinSec - kEpsSec)
                 {
-                    pieces.push_back({ noteFirst, devFirst - 1 });
-                    noteFirst = devFirst;
+                    // 平滑化（約 100 ms の median）のため、検出は音高の変化より遅れる。境界は、弱い平滑化の曲線が
+                    // 元の音高から離れ始めた位置まで戻す（ポルタメントの開始位置 = ノートの開始位置）。
+                    const float oldCenter = center;
+                    std::size_t boundary = devFirst;
+                    while (boundary > noteFirst + 2 && std::fabs(light[boundary - 1] - oldCenter) > kBoundaryDeviationSemitone)
+                    {
+                        --boundary;
+                    }
+
+                    pieces.push_back({ noteFirst, boundary - 1 });
+                    noteFirst = boundary;
                     sorted.clear();
-                    for (std::size_t k = devFirst; k <= j; ++k)
+                    for (std::size_t k = boundary; k <= j; ++k)
                     {
                         insertSorted(sorted, smoothed[k]);
                     }

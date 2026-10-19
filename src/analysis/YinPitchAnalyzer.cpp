@@ -133,7 +133,7 @@ model::PitchTrack YinPitchAnalyzer::analyze(const MonoAudioView& audio, const Pr
 
     // YIN の窓長とラグ範囲（間引き後のサンプル単位）
     const std::ptrdiff_t W = std::max<std::ptrdiff_t>(
-        4, static_cast<std::ptrdiff_t>(std::llround(3.0 / static_cast<double>(params.fMinHz) * fsd)));
+        4, static_cast<std::ptrdiff_t>(std::llround(1.5 / static_cast<double>(params.fMinHz) * fsd)));
     const std::ptrdiff_t halfW = W / 2;
     const std::ptrdiff_t tauLo = std::max<std::ptrdiff_t>(
         2, static_cast<std::ptrdiff_t>(std::floor(fsd / static_cast<double>(params.fMaxHz))));

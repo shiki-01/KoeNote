@@ -1,4 +1,5 @@
 add_executable(koenote_tests
+    test_accuracy.cpp
     test_batch.cpp
     test_byte_stream.cpp
     test_dtw.cpp
