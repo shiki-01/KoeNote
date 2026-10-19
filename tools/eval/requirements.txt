@@ -1,0 +1,2 @@
+mir_eval>=0.7
+numpy>=1.24

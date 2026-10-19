@@ -1,0 +1,104 @@
+#pragma once
+
+#include "model/ModelVersion.h"
+#include "model/Note.h"
+#include "model/PitchTrack.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <optional>
+#include <vector>
+
+namespace koenote::model
+{
+// 1 つの ARA AudioModification に対応する編集モデル（要件 5章「編集モデル層」）。
+// message thread からのみ操作する。オーディオスレッドからは触らない
+// （レンダリングには値コピーした snapshot を渡す）。
+class EditModel
+{
+public:
+    static constexpr double kMinNoteDurationSec = 0.03;
+    static constexpr std::size_t kMaxUndoDepth = 256;
+    static constexpr std::size_t npos = static_cast<std::size_t>(-1);
+
+    //==========================================================================
+    // 解析結果
+    bool hasAnalysis() const noexcept { return analysed; }
+    const PitchTrack& pitchTrack() const noexcept { return track; }
+    const std::vector<Note>& notes() const noexcept { return noteList; }
+    const Note* findNote(NoteId id) const noexcept;
+    // id の添字。見つからなければ npos
+    std::size_t indexOf(NoteId id) const noexcept;
+    // 時刻（元音声の秒）を含むノートの id。なければ 0
+    NoteId noteAt(double sourceSec) const noexcept;
+
+    // 解析結果を設定する。ノートに id を採番し、Undo 履歴を破棄する。
+    void setAnalysis(PitchTrack newTrack, std::vector<Note> newNotes);
+
+    //==========================================================================
+    // 編集操作。いずれも不正な結果になる場合は何も変更せず false を返す。
+    // ドラッグ操作などで複数回の変更を 1 つの Undo にまとめるときは beginEdit/endEdit で囲む。
+    void beginEdit();
+    void endEdit();
+
+    bool setNotePitchOffset(NoteId id, float cents);
+    bool setNoteEdit(NoteId id, const NoteEdit& edit);
+    // 編集後のノート区間（出力時間軸）を設定する
+    bool setNoteTiming(NoteId id, double targetStartSec, double targetEndSec);
+    // 元音声の時刻 atSourceSec でノートを 2 つに分割する
+    bool splitNote(NoteId id, double atSourceSec, NoteId* rightId = nullptr);
+    // id のノートと、直後のノートを結合する
+    bool mergeWithNext(NoteId id);
+    // id のノートと直後のノートの境界（元音声の時刻）を移動する
+    bool moveBoundary(NoteId id, double newBoundarySec);
+    // ノートの編集内容を初期状態に戻す
+    bool resetNote(NoteId id);
+    // 全ノートの編集内容を初期状態に戻す
+    bool resetAll();
+
+    //==========================================================================
+    // Undo / Redo
+    bool canUndo() const noexcept { return ! undoStack.empty(); }
+    bool canRedo() const noexcept { return ! redoStack.empty(); }
+    bool undo();
+    bool redo();
+
+    // 内容が変わるたびに増える。レンダリングキャッシュの更新判定に使う。
+    std::uint64_t revision() const noexcept { return revisionCounter; }
+
+    //==========================================================================
+    // 保存・復元（バージョン付きバイナリ形式。kEditModelFormatVersion を参照）
+    std::vector<std::uint8_t> serialize() const;
+    // 不正なデータ、または未対応の新しいバージョンの場合は nullopt
+    static std::optional<EditModel> deserialize(const std::uint8_t* data, std::size_t size);
+
+private:
+    struct Snapshot
+    {
+        std::vector<Note> notes;
+        NoteId nextId = 1;
+    };
+
+    Snapshot makeSnapshot() const { return { noteList, nextNoteId }; }
+    void restore(const Snapshot& s);
+    static bool isValid(const std::vector<Note>& notes) noexcept;
+
+    // 変更を試行する。mutator が false を返す、または結果が不正なら元に戻す。
+    template <typename Fn>
+    bool mutate(Fn&& mutator);
+    void commit(Snapshot before);
+
+    bool analysed = false;
+    PitchTrack track;
+    std::vector<Note> noteList;
+    NoteId nextNoteId = 1;
+    std::uint64_t revisionCounter = 0;
+
+    std::vector<Snapshot> undoStack;
+    std::vector<Snapshot> redoStack;
+
+    int editDepth = 0;
+    std::optional<Snapshot> pendingBefore; // beginEdit 時点の状態
+    bool pendingChanged = false;
+};
+} // namespace koenote::model
