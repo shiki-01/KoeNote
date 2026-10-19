@@ -11,7 +11,10 @@ namespace koenote::plugin
 class KoeNoteAudioSource::LoadThread final : public juce::Thread
 {
 public:
-    explicit LoadThread(KoeNoteAudioSource& ownerIn) : juce::Thread("KoeNote source loader"), owner(ownerIn) {}
+    LoadThread(KoeNoteAudioSource& ownerIn, juce::ARAAudioSourceReader& readerIn)
+        : juce::Thread("KoeNote source loader"), owner(ownerIn), reader(readerIn)
+    {
+    }
     ~LoadThread() override { stopThread(10000); }
 
     void run() override
@@ -43,8 +46,6 @@ public:
         }
 
         std::vector<float*> destinations(static_cast<std::size_t>(numChannels));
-        juce::ARAAudioSourceReader reader(&owner);
-
         for (std::int64_t position = 0; position < numFrames; position += kChunkFrames)
         {
             if (threadShouldExit())
@@ -70,6 +71,7 @@ public:
 
 private:
     KoeNoteAudioSource& owner;
+    juce::ARAAudioSourceReader& reader;
 };
 
 KoeNoteAudioSource::KoeNoteAudioSource(ARA::PlugIn::Document* document, ARA::ARAAudioSourceHostRef hostRef)
@@ -90,7 +92,8 @@ void KoeNoteAudioSource::startLoading()
     if (! isSampleAccessEnabled())
         return;
 
-    loader = std::make_unique<LoadThread>(*this);
+    reader = std::make_unique<juce::ARAAudioSourceReader>(this);
+    loader = std::make_unique<LoadThread>(*this, *reader);
     loader->startThread();
 }
 
@@ -101,6 +104,8 @@ void KoeNoteAudioSource::stopLoading()
         loader->stopThread(10000);
         loader.reset();
     }
+
+    reader.reset();
 }
 
 std::shared_ptr<const SourceAudioData> KoeNoteAudioSource::sharedAudio() const

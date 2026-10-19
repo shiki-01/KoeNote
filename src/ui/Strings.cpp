@@ -21,6 +21,11 @@ Strings makeJapanese()
     s.reset = juce::CharPointer_UTF8("リセット");
     s.zoomFit = juce::CharPointer_UTF8("全体表示");
     s.language = "English";
+    s.reanalyze = juce::CharPointer_UTF8("再解析");
+    s.reanalyzeTitle = juce::CharPointer_UTF8("再解析");
+    s.reanalyzeMessage = juce::CharPointer_UTF8("編集内容をすべて破棄して、元の音声から解析し直します。よろしいですか？");
+    s.ok = "OK";
+    s.cancel = juce::CharPointer_UTF8("キャンセル");
     s.paramCenter = juce::CharPointer_UTF8("ピッチ中心の補正");
     s.paramVibrato = juce::CharPointer_UTF8("ビブラート量");
     s.paramDrift = juce::CharPointer_UTF8("ピッチドリフト");
@@ -41,6 +46,7 @@ Strings makeJapanese()
     s.tipBoundary = juce::CharPointer_UTF8("隣り合うノートの境界をドラッグして移動します。");
     s.tipMerge = juce::CharPointer_UTF8("選択したノートと直後のノートを結合します (J)。");
     s.tipReset = juce::CharPointer_UTF8("選択したノートの編集内容を元に戻します (Delete)。");
+    s.tipReanalyze = juce::CharPointer_UTF8("編集内容を破棄して、音声を解析し直します。");
     return s;
 }
 
@@ -61,6 +67,11 @@ Strings makeEnglish()
     s.reset = "Reset";
     s.zoomFit = "Fit";
     s.language = juce::CharPointer_UTF8("日本語");
+    s.reanalyze = "Re-analyze";
+    s.reanalyzeTitle = "Re-analyze";
+    s.reanalyzeMessage = "All edits will be discarded and the audio will be analyzed again. Continue?";
+    s.ok = "OK";
+    s.cancel = "Cancel";
     s.paramCenter = "Pitch center correction";
     s.paramVibrato = "Vibrato amount";
     s.paramDrift = "Pitch drift";
@@ -81,6 +92,7 @@ Strings makeEnglish()
     s.tipBoundary = "Drag the boundary between adjacent notes.";
     s.tipMerge = "Merge the selected note with the next one (J).";
     s.tipReset = "Reset the selected notes (Delete).";
+    s.tipReanalyze = "Discard all edits and analyze the audio again.";
     return s;
 }
 } // namespace

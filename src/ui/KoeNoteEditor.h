@@ -44,7 +44,7 @@ private:
     NoteParamPanel panel;
 
     juce::TextButton selectButton, splitButton, boundaryButton;
-    juce::TextButton undoButton, redoButton, mergeButton, resetButton, fitButton, languageButton;
+    juce::TextButton undoButton, redoButton, mergeButton, resetButton, fitButton, reanalyzeButton, languageButton;
     juce::ComboBox snapBox, rootBox, scaleBox;
     juce::Label statusLabel;
 

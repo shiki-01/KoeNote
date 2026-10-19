@@ -30,7 +30,7 @@ KoeNoteEditor::KoeNoteEditor(plugin::KoeNoteProcessor& processor)
         addAndMakeVisible(*b);
     }
 
-    for (auto* b : { &undoButton, &redoButton, &mergeButton, &resetButton, &fitButton, &languageButton })
+    for (auto* b : { &undoButton, &redoButton, &mergeButton, &resetButton, &fitButton, &reanalyzeButton, &languageButton })
         addAndMakeVisible(*b);
 
     selectButton.setToggleState(true, juce::dontSendNotification);
@@ -42,6 +42,23 @@ KoeNoteEditor::KoeNoteEditor(plugin::KoeNoteProcessor& processor)
     mergeButton.onClick = [this] { roll.mergeSelected(); };
     resetButton.onClick = [this] { roll.resetSelected(); };
     fitButton.onClick = [this] { roll.zoomToFit(); };
+    reanalyzeButton.onClick = [this]
+    {
+        if (roll.getModification() == nullptr)
+            return;
+
+        const auto& s = getStrings(language);
+        auto options = juce::MessageBoxOptions::makeOptionsOkCancel(juce::MessageBoxIconType::WarningIcon, s.reanalyzeTitle, s.reanalyzeMessage, s.ok, s.cancel, this);
+
+        // 非同期のダイアログ。確認後にモデルが差し替わっている場合に備え、実行時に対象を取り直す。
+        juce::Component::SafePointer<KoeNoteEditor> safe(this);
+
+        juce::AlertWindow::showAsync(options, [safe] (int result)
+        {
+            if (safe != nullptr && result == 1 && safe->roll.getModification() != nullptr)
+                safe->roll.getModification()->requestReanalysis();
+        });
+    };
     languageButton.onClick = [this]
     {
         language = language == Language::Japanese ? Language::English : Language::Japanese;
@@ -105,6 +122,8 @@ void KoeNoteEditor::applyLanguage()
     mergeButton.setButtonText(s.merge);
     resetButton.setButtonText(s.reset);
     fitButton.setButtonText(s.zoomFit);
+    reanalyzeButton.setButtonText(s.reanalyze);
+    reanalyzeButton.setTooltip(s.tipReanalyze);
     languageButton.setButtonText(s.language);
 
     selectButton.setTooltip(s.tipSelect);
@@ -163,7 +182,7 @@ void KoeNoteEditor::resized()
     if (! isARAEditorView())
     {
         for (auto* c : std::initializer_list<juce::Component*> { &selectButton, &splitButton, &boundaryButton, &undoButton, &redoButton, &mergeButton,
-                                                                 &resetButton, &fitButton, &languageButton, &snapBox, &rootBox, &scaleBox, &statusLabel, &roll, &panel })
+                                                                 &resetButton, &fitButton, &reanalyzeButton, &languageButton, &snapBox, &rootBox, &scaleBox, &statusLabel, &roll, &panel })
             c->setVisible(false);
         return;
     }
@@ -186,6 +205,8 @@ void KoeNoteEditor::resized()
     languageButton.setBounds(toolbar.removeFromRight(72));
     toolbar.removeFromRight(6);
     fitButton.setBounds(toolbar.removeFromRight(72));
+    toolbar.removeFromRight(6);
+    reanalyzeButton.setBounds(toolbar.removeFromRight(78));
     toolbar.removeFromRight(6);
 
     for (auto* b : { &undoButton, &redoButton, &mergeButton, &resetButton })

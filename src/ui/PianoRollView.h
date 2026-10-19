@@ -43,6 +43,7 @@ float snapMidi(float midi, SnapMode mode, int root, ScaleType scale) noexcept;
 // 表示する時間軸は出力時間軸（編集後）。すべて message thread で動作する。
 class PianoRollView final : public juce::Component,
                             private juce::ChangeListener,
+                            private plugin::EditTarget::DestructionListener,
                             private juce::Timer
 {
 public:
@@ -114,6 +115,7 @@ private:
     };
 
     void changeListenerCallback(juce::ChangeBroadcaster*) override;
+    void editTargetWillBeDestroyed(plugin::EditTarget* target) override;
     void timerCallback() override;
 
     // 座標変換

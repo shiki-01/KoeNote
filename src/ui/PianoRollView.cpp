@@ -94,7 +94,10 @@ void PianoRollView::setModification(plugin::EditTarget* modification)
         return;
 
     if (current != nullptr)
+    {
         current->removeChangeListener(this);
+        current->removeDestructionListener(this);
+    }
 
     current = modification;
     selection.clear();
@@ -106,7 +109,10 @@ void PianoRollView::setModification(plugin::EditTarget* modification)
     editGestureOpen = false;
 
     if (current != nullptr)
+    {
         current->addChangeListener(this);
+        current->addDestructionListener(this);
+    }
 
     refreshCaches();
     zoomToFit();
@@ -376,6 +382,12 @@ void PianoRollView::changeListenerCallback(juce::ChangeBroadcaster*)
 
     if (onModelChanged)
         onModelChanged();
+}
+
+void PianoRollView::editTargetWillBeDestroyed(plugin::EditTarget* target)
+{
+    if (target == current)
+        setModification(nullptr);
 }
 
 void PianoRollView::timerCallback()

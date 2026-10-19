@@ -42,7 +42,8 @@ bool KoeNotePlaybackRenderer::processBlock(juce::AudioBuffer<float>& buffer,
     const auto blockStart = positionInfo.getTimeInSamples().orFallback(0);
     const auto blockRange = juce::Range<juce::int64>::withStartAndLength(blockStart, numSamples);
 
-    bool success = true;
+    bool anyRendered = false;
+    bool anyFailed = false;
 
     for (const auto& region : getPlaybackRegions())
     {
@@ -59,9 +60,11 @@ bool KoeNotePlaybackRenderer::processBlock(juce::AudioBuffer<float>& buffer,
         // 読み込み未完了のリージョンは鳴らさない（読み込み完了後に鳴る）
         if (! audio.valid)
         {
-            success = false;
+            anyFailed = true;
             continue;
         }
+
+        anyRendered = true;
 
         const auto startInBlock = static_cast<int>(renderRange.getStart() - blockStart);
         const auto count = static_cast<int>(renderRange.getLength());
@@ -96,6 +99,7 @@ bool KoeNotePlaybackRenderer::processBlock(juce::AudioBuffer<float>& buffer,
         }
     }
 
-    return success;
+    // 一部のリージョンが未読み込みでも、鳴らせたリージョンの音は捨てない。全てが失敗したときだけ false を返す。
+    return anyRendered || ! anyFailed;
 }
 } // namespace koenote::plugin

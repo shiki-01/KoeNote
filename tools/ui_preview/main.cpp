@@ -81,6 +81,7 @@ public:
     model::EditModel& getModel() noexcept override { return model; }
     const model::EditModel& getModel() const noexcept override { return model; }
     void notifyEdited() override { ++notifications; sendChangeMessage(); }
+    void requestReanalysis() override {}
     plugin::AnalysisState getAnalysisState() const noexcept override { return plugin::AnalysisState::Done; }
     float getAnalysisProgress() const noexcept override { return 1.0f; }
     bool isRenderPending() const noexcept override { return false; }

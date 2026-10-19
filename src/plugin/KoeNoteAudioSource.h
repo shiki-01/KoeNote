@@ -3,6 +3,7 @@
 #include "plugin/SourceAudioData.h"
 #include "render/ProcessingGate.h"
 
+#include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <atomic>
@@ -48,6 +49,9 @@ private:
     void publish(std::shared_ptr<SourceAudioData> newData);
 
     render::ProcessingGate* gate = nullptr;
+    // ARA のルール: reader の生成と破棄は document controller と同じスレッド（message thread）で行い、
+    // 読み出しだけを別スレッドで行う。
+    std::unique_ptr<juce::ARAAudioSourceReader> reader;
     std::unique_ptr<LoadThread> loader;
 
     mutable std::mutex dataMutex;

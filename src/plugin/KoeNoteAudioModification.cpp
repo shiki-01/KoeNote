@@ -81,6 +81,7 @@ KoeNoteAudioModification::KoeNoteAudioModification(juce::ARAAudioSource* source,
 
 KoeNoteAudioModification::~KoeNoteAudioModification()
 {
+    notifyWillBeDestroyed();
     cancelPendingUpdate();
     worker.reset(); // スレッドの終了を待つ
 }
@@ -133,6 +134,29 @@ void KoeNoteAudioModification::replaceModel(model::EditModel restored)
         sendChangeMessage();
 }
 
+void KoeNoteAudioModification::requestReanalysis()
+{
+    // 編集内容は破棄される。再生は解析が終わるまで元音声のままになる。
+    model = model::EditModel {};
+    analysisState = AnalysisState::WaitingForAudio;
+
+    // 実行中・待機中のレンダリングを取り消し、編集済みの音声を捨てて元音声へ戻す
+    ++latestRequestToken;
+    {
+        const std::lock_guard<std::mutex> lock(handoffMutex);
+        pendingRenderRequest.reset();
+    }
+    renderPending = false;
+    publishClip(nullptr);
+    renderFinished = true;
+    triggerAsyncUpdate();
+
+    if (getAudioSource<KoeNoteAudioSource>()->isLoaded())
+        onSourceAudioReady();
+
+    sendChangeMessage();
+}
+
 void KoeNoteAudioModification::notifyEdited()
 {
     requestRender();
@@ -159,13 +183,13 @@ void KoeNoteAudioModification::requestRender()
     request.notes = model.notes();
     request.track = model.pitchTrack();
     request.revision = model.revision();
+    request.token = ++latestRequestToken;
 
     {
         const std::lock_guard<std::mutex> lock(handoffMutex);
         pendingRenderRequest = std::move(request);
     }
 
-    latestRequestedRevision = model.revision();
     renderPending = true;
 
     if (worker == nullptr)
@@ -255,12 +279,12 @@ void KoeNoteAudioModification::runRender()
         input.track = &request->track;
         input.notes = &request->notes;
 
-        const auto revision = request->revision;
+        const auto token = request->token;
 
-        auto rendered = render::renderEditedAudio(input, [this, revision] (float)
+        auto rendered = render::renderEditedAudio(input, [this, token] (float)
         {
             // より新しい要求が来ていたら中断する
-            return ! juce::Thread::currentThreadShouldExit() && latestRequestedRevision.load() == revision;
+            return ! juce::Thread::currentThreadShouldExit() && latestRequestToken.load() == token;
         });
 
         if (rendered.numChannels == 0)
@@ -268,17 +292,18 @@ void KoeNoteAudioModification::runRender()
 
         newClip = std::make_shared<RenderedClip>();
         newClip->audio = std::move(rendered);
-        newClip->revision = revision;
+        newClip->revision = request->revision;
 
         for (const auto& channel : newClip->audio.channels)
             newClip->channelPointers.push_back(channel.data());
     }
 
-    publishClip(std::move(newClip));
+    // 実行中に要求が取り消された・更新された場合は、古い結果を公開しない
+    if (latestRequestToken.load() != request->token)
+        return;
 
-    // 実行中に新しい要求が来ていなければ完了を通知する
-    if (latestRequestedRevision.load() == request->revision)
-        renderPending = false;
+    publishClip(std::move(newClip));
+    renderPending = false;
 
     renderFinished = true;
     triggerAsyncUpdate();

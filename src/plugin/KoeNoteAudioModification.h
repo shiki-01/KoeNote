@@ -57,6 +57,7 @@ public:
     void replaceModel(model::EditModel restored);
     // 元音声の読み込み完了時に呼ばれる
     void onSourceAudioReady();
+    void requestReanalysis() override;
 
     AnalysisState getAnalysisState() const noexcept override { return analysisState.load(); }
     float getAnalysisProgress() const noexcept override { return analysisProgress.load(); }
@@ -114,9 +115,10 @@ private:
         std::vector<model::Note> notes;
         model::PitchTrack track;
         std::uint64_t revision = 0;
+        std::uint64_t token = 0; // 要求ごとに増える。古い要求の結果を捨てるために使う
     };
     std::optional<RenderRequest> pendingRenderRequest;
-    std::atomic<std::uint64_t> latestRequestedRevision { 0 };
+    std::atomic<std::uint64_t> latestRequestToken { 0 };
     std::atomic<bool> renderPending { false };
 
     // レンダリング結果。published はオーディオスレッドが参照する生ポインタ（所有は clip）

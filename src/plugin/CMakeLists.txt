@@ -1,5 +1,6 @@
 juce_add_plugin(KoeNote
     COMPANY_NAME "KoeNote Project"
+    COMPANY_WEBSITE "${KOENOTE_WEBSITE}"
     PRODUCT_NAME "KoeNote"
     BUNDLE_ID org.koenote.KoeNote
     PLUGIN_MANUFACTURER_CODE Koen

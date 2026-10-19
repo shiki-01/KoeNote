@@ -23,7 +23,18 @@ enum class AnalysisState
 class EditTarget : public juce::ChangeBroadcaster
 {
 public:
+    // 対象が破棄される直前に通知される。UI は参照を手放すこと。
+    class DestructionListener
+    {
+    public:
+        virtual ~DestructionListener() = default;
+        virtual void editTargetWillBeDestroyed(EditTarget* target) = 0;
+    };
+
     ~EditTarget() override = default;
+
+    void addDestructionListener(DestructionListener* l) { destructionListeners.add(l); }
+    void removeDestructionListener(DestructionListener* l) { destructionListeners.remove(l); }
 
     virtual model::EditModel& getModel() noexcept = 0;
     virtual const model::EditModel& getModel() const noexcept = 0;
@@ -37,5 +48,18 @@ public:
 
     // 元音声（編集前）。波形表示用。未読み込みなら nullptr。
     virtual std::shared_ptr<const SourceAudioData> getSourceAudio() const = 0;
+
+    // 編集内容を破棄して、元音声から解析し直す
+    virtual void requestReanalysis() = 0;
+
+protected:
+    // 派生クラスのデストラクタの先頭で呼ぶ
+    void notifyWillBeDestroyed()
+    {
+        destructionListeners.call([this] (DestructionListener& l) { l.editTargetWillBeDestroyed(this); });
+    }
+
+private:
+    juce::ListenerList<DestructionListener> destructionListeners;
 };
 } // namespace koenote::plugin

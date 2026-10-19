@@ -16,11 +16,12 @@ struct Strings
     juce::String toolSelect, toolSplit, toolBoundary;
     juce::String snapOff, snapSemitone, snapScale;
     juce::String scaleMajor, scaleMinor;
-    juce::String undo, redo, merge, reset, zoomFit, language;
+    juce::String undo, redo, merge, reset, zoomFit, language, reanalyze;
+    juce::String reanalyzeTitle, reanalyzeMessage, ok, cancel;
     juce::String paramCenter, paramVibrato, paramDrift, paramTransition, paramPitch, paramNone;
     juce::String statusWaiting, statusAnalyzing, statusDone, statusFailed, statusRendering, statusNoNotes;
     juce::String notARA, noClip, notes;
-    juce::String tipSelect, tipSplit, tipBoundary, tipMerge, tipReset;
+    juce::String tipSelect, tipSplit, tipBoundary, tipMerge, tipReset, tipReanalyze;
 };
 
 const Strings& getStrings(Language language);
