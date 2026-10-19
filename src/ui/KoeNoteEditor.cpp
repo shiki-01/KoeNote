@@ -6,9 +6,9 @@ namespace koenote::ui
 {
 namespace
 {
-constexpr int kToolbarHeight = 36;
+constexpr int kToolbarRowHeight = 32;
 constexpr int kStatusHeight = 24;
-constexpr int kPanelWidth = 220;
+constexpr int kPanelWidth = 300;
 
 void styleToggle(juce::TextButton& b)
 {
@@ -22,25 +22,32 @@ KoeNoteEditor::KoeNoteEditor(plugin::KoeNoteProcessor& processor)
       juce::AudioProcessorEditorARAExtension(&processor),
       processorRef(processor),
       language(detectDefaultLanguage()),
-      panel(roll)
+      noteParams(roll),
+      batchPanel(roll, [this] { syncSnapFromModel(); }),
+      midiPanel(roll),
+      toolsPanel(roll)
 {
-    for (auto* b : { &selectButton, &splitButton, &boundaryButton })
+    for (auto* b : { &selectButton, &splitButton, &boundaryButton, &assignButton })
     {
         styleToggle(*b);
         addAndMakeVisible(*b);
     }
 
-    for (auto* b : { &undoButton, &redoButton, &mergeButton, &resetButton, &fitButton, &reanalyzeButton, &languageButton })
+    for (auto* b : { &undoButton, &redoButton, &mergeButton, &resetButton, &abButton, &fitButton, &reanalyzeButton, &languageButton })
         addAndMakeVisible(*b);
+
+    abButton.setClickingTogglesState(true);
 
     selectButton.setToggleState(true, juce::dontSendNotification);
     selectButton.onClick = [this] { roll.setTool(Tool::Select); };
     splitButton.onClick = [this] { roll.setTool(Tool::Split); };
     boundaryButton.onClick = [this] { roll.setTool(Tool::Boundary); };
+    assignButton.onClick = [this] { roll.setTool(Tool::Assign); };
     undoButton.onClick = [this] { roll.undo(); };
     redoButton.onClick = [this] { roll.redo(); };
     mergeButton.onClick = [this] { roll.mergeSelected(); };
     resetButton.onClick = [this] { roll.resetSelected(); };
+    abButton.onClick = [this] { toolsPanel.setCompareOriginal(abButton.getToggleState()); };
     fitButton.onClick = [this] { roll.zoomToFit(); };
     reanalyzeButton.onClick = [this]
     {
@@ -67,7 +74,7 @@ KoeNoteEditor::KoeNoteEditor(plugin::KoeNoteProcessor& processor)
 
     for (auto* box : { &snapBox, &rootBox, &scaleBox })
     {
-        box->onChange = [this] { applySnap(); };
+        box->onChange = [this] { applySnapFromUi(); };
         addAndMakeVisible(*box);
     }
 
@@ -80,21 +87,40 @@ KoeNoteEditor::KoeNoteEditor(plugin::KoeNoteProcessor& processor)
     statusLabel.setFont(juce::FontOptions(12.0f));
     addAndMakeVisible(statusLabel);
 
-    roll.onSelectionChanged = [this] { panel.refresh(); updateStatus(); };
-    roll.onModelChanged = [this] { panel.refresh(); updateStatus(); };
+    // サイドパネル（タブ）
+    noteView.setViewedComponent(&noteParams, false);
+    batchView.setViewedComponent(&batchPanel, false);
+    midiView.setViewedComponent(&midiPanel, false);
+    toolsView.setViewedComponent(&toolsPanel, false);
+
+    for (auto* v : { &noteView, &batchView, &midiView, &toolsView })
+    {
+        v->setScrollBarsShown(true, false);
+        v->setScrollBarThickness(10);
+    }
+
+    const juce::Colour tabColour(0xff20232a);
+    tabs.setTabBarDepth(28);
+    tabs.addTab("Note", tabColour, &noteView, false);
+    tabs.addTab("Batch", tabColour, &batchView, false);
+    tabs.addTab("MIDI", tabColour, &midiView, false);
+    tabs.addTab("More", tabColour, &toolsView, false);
+    tabs.setOutline(0);
+    addAndMakeVisible(tabs);
+
+    roll.onSelectionChanged = [this] { noteParams.refresh(); refreshPanels(); updateStatus(); };
+    roll.onModelChanged = [this] { noteParams.refresh(); refreshPanels(); updateStatus(); };
 
     addAndMakeVisible(roll);
-    addAndMakeVisible(panel);
 
     applyLanguage();
-    applySnap();
 
     if (auto* view = getARAEditorView())
         view->addListener(this);
 
     setResizable(true, false);
-    setResizeLimits(640, 360, 4000, 2000);
-    setSize(1000, 540);
+    setResizeLimits(760, 420, 4000, 2000);
+    setSize(1240, 600);
 
     refreshTarget();
     startTimerHz(30);
@@ -117,20 +143,26 @@ void KoeNoteEditor::applyLanguage()
     selectButton.setButtonText(s.toolSelect);
     splitButton.setButtonText(s.toolSplit);
     boundaryButton.setButtonText(s.toolBoundary);
+    assignButton.setButtonText(s.toolAssign);
     undoButton.setButtonText(s.undo);
     redoButton.setButtonText(s.redo);
     mergeButton.setButtonText(s.merge);
     resetButton.setButtonText(s.reset);
+    abButton.setButtonText(s.abButton);
     fitButton.setButtonText(s.zoomFit);
     reanalyzeButton.setButtonText(s.reanalyze);
-    reanalyzeButton.setTooltip(s.tipReanalyze);
     languageButton.setButtonText(s.language);
 
     selectButton.setTooltip(s.tipSelect);
     splitButton.setTooltip(s.tipSplit);
     boundaryButton.setTooltip(s.tipBoundary);
+    assignButton.setTooltip(s.tipAssign);
     mergeButton.setTooltip(s.tipMerge);
     resetButton.setTooltip(s.tipReset);
+    reanalyzeButton.setTooltip(s.tipReanalyze);
+    abButton.setTooltip(s.tipAB);
+
+    const juce::ScopedValueSetter<bool> guard(syncingSnap, true);
 
     const int snapId = snapBox.getSelectedId();
     snapBox.clear(juce::dontSendNotification);
@@ -145,14 +177,25 @@ void KoeNoteEditor::applyLanguage()
     scaleBox.addItem(s.scaleMinor, 2);
     scaleBox.setSelectedId(scaleId > 0 ? scaleId : 1, juce::dontSendNotification);
 
+    tabs.setTabName(0, s.tabNote);
+    tabs.setTabName(1, s.tabBatch);
+    tabs.setTabName(2, s.tabMidi);
+    tabs.setTabName(3, s.tabMore);
+
     roll.setLanguage(language);
-    panel.setLanguage(language);
+    noteParams.setLanguage(language);
+    batchPanel.setLanguage(language);
+    midiPanel.setLanguage(language);
+    toolsPanel.setLanguage(language);
     updateStatus();
     repaint();
 }
 
-void KoeNoteEditor::applySnap()
+void KoeNoteEditor::applySnapFromUi()
 {
+    if (syncingSnap)
+        return;
+
     const auto mode = static_cast<SnapMode>(std::clamp(snapBox.getSelectedId() - 1, 0, 2));
     const int root = std::max(0, rootBox.getSelectedId() - 1);
     const auto scale = scaleBox.getSelectedId() == 2 ? ScaleType::Minor : ScaleType::Major;
@@ -160,6 +203,39 @@ void KoeNoteEditor::applySnap()
     rootBox.setEnabled(mode == SnapMode::Scale);
     scaleBox.setEnabled(mode == SnapMode::Scale);
     roll.setSnap(mode, root, scale);
+
+    // スナップ設定はプロジェクトに保存する
+    if (auto* target = roll.getModification())
+    {
+        auto settings = target->getModel().settings();
+        settings.snapMode = static_cast<std::uint8_t>(mode);
+        settings.keyRoot = static_cast<std::uint8_t>(root);
+        settings.keyMinor = scale == ScaleType::Minor ? 1 : 0;
+        target->getModel().setSettings(settings);
+    }
+
+    roll.repaint();
+}
+
+void KoeNoteEditor::syncSnapFromModel()
+{
+    auto* target = roll.getModification();
+    if (target == nullptr)
+        return;
+
+    const auto& settings = target->getModel().settings();
+
+    {
+        const juce::ScopedValueSetter<bool> guard(syncingSnap, true);
+        snapBox.setSelectedId(std::clamp<int>(settings.snapMode, 0, 2) + 1, juce::dontSendNotification);
+        rootBox.setSelectedId(std::clamp<int>(settings.keyRoot, 0, 11) + 1, juce::dontSendNotification);
+        scaleBox.setSelectedId(settings.keyMinor != 0 ? 2 : 1, juce::dontSendNotification);
+    }
+
+    const auto mode = static_cast<SnapMode>(std::clamp<int>(settings.snapMode, 0, 2));
+    rootBox.setEnabled(mode == SnapMode::Scale);
+    scaleBox.setEnabled(mode == SnapMode::Scale);
+    roll.setSnap(mode, settings.keyRoot, settings.keyMinor != 0 ? ScaleType::Minor : ScaleType::Major);
     roll.repaint();
 }
 
@@ -175,45 +251,78 @@ void KoeNoteEditor::paint(juce::Graphics& g)
     }
 }
 
+void KoeNoteEditor::layoutPanels()
+{
+    // 各タブのパネルは、ビューポートの幅に合わせ、内容の高さ（足りなければビューポートの高さ）にする
+    const struct { juce::Viewport* view; SidePanel* panel; juce::Component* plain; } items[] = {
+        { &noteView, nullptr, &noteParams }, { &batchView, &batchPanel, nullptr }, { &midiView, &midiPanel, nullptr }, { &toolsView, &toolsPanel, nullptr }
+    };
+
+    for (const auto& item : items)
+    {
+        const int width = std::max(100, item.view->getMaximumVisibleWidth());
+        const int preferred = item.panel != nullptr ? item.panel->getPreferredHeight() : noteParams.getPreferredHeight();
+        const int height = std::max(preferred, item.view->getHeight());
+        (item.panel != nullptr ? static_cast<juce::Component*>(item.panel) : item.plain)->setSize(width, height);
+    }
+}
+
 void KoeNoteEditor::resized()
 {
     auto area = getLocalBounds();
 
     if (! isARAEditorView())
     {
-        for (auto* c : std::initializer_list<juce::Component*> { &selectButton, &splitButton, &boundaryButton, &undoButton, &redoButton, &mergeButton,
-                                                                 &resetButton, &fitButton, &reanalyzeButton, &languageButton, &snapBox, &rootBox, &scaleBox, &statusLabel, &roll, &panel })
+        for (auto* c : std::initializer_list<juce::Component*> { &selectButton, &splitButton, &boundaryButton, &assignButton, &undoButton, &redoButton,
+                                                                 &mergeButton, &resetButton, &abButton, &fitButton, &reanalyzeButton, &languageButton,
+                                                                 &snapBox, &rootBox, &scaleBox, &statusLabel, &roll, &tabs })
             c->setVisible(false);
         return;
     }
 
-    auto toolbar = area.removeFromTop(kToolbarHeight).reduced(6, 4);
-    auto status = area.removeFromBottom(kStatusHeight).reduced(8, 2);
-    statusLabel.setBounds(status);
+    auto row1 = area.removeFromTop(kToolbarRowHeight).reduced(6, 3);
+    auto row2 = area.removeFromTop(kToolbarRowHeight).reduced(6, 3);
+    statusLabel.setBounds(area.removeFromBottom(kStatusHeight).reduced(8, 2));
 
-    for (auto* b : { &selectButton, &splitButton, &boundaryButton })
-        b->setBounds(toolbar.removeFromLeft(68).reduced(1, 0));
+    // 1 段目: ツール、スナップ、言語
+    for (auto* b : { &selectButton, &splitButton, &boundaryButton, &assignButton })
+        b->setBounds(row1.removeFromLeft(72).reduced(1, 0));
 
-    toolbar.removeFromLeft(10);
-    snapBox.setBounds(toolbar.removeFromLeft(110));
-    toolbar.removeFromLeft(4);
-    rootBox.setBounds(toolbar.removeFromLeft(58));
-    toolbar.removeFromLeft(4);
-    scaleBox.setBounds(toolbar.removeFromLeft(96));
-    toolbar.removeFromLeft(12);
+    row1.removeFromLeft(12);
+    snapBox.setBounds(row1.removeFromLeft(112));
+    row1.removeFromLeft(4);
+    rootBox.setBounds(row1.removeFromLeft(58));
+    row1.removeFromLeft(4);
+    scaleBox.setBounds(row1.removeFromLeft(96));
+    languageButton.setBounds(row1.removeFromRight(76));
 
-    languageButton.setBounds(toolbar.removeFromRight(72));
-    toolbar.removeFromRight(6);
-    fitButton.setBounds(toolbar.removeFromRight(72));
-    toolbar.removeFromRight(6);
-    reanalyzeButton.setBounds(toolbar.removeFromRight(78));
-    toolbar.removeFromRight(6);
-
+    // 2 段目: 編集操作、A/B、表示、再解析
     for (auto* b : { &undoButton, &redoButton, &mergeButton, &resetButton })
-        b->setBounds(toolbar.removeFromLeft(78).reduced(1, 0));
+        b->setBounds(row2.removeFromLeft(84).reduced(1, 0));
 
-    panel.setBounds(area.removeFromRight(kPanelWidth));
+    row2.removeFromLeft(12);
+    abButton.setBounds(row2.removeFromLeft(56));
+    row2.removeFromLeft(12);
+    fitButton.setBounds(row2.removeFromLeft(80));
+    reanalyzeButton.setBounds(row2.removeFromRight(88));
+
+    const int panelWidth = std::min(kPanelWidth, getWidth() / 2);
+    tabs.setBounds(area.removeFromRight(panelWidth));
     roll.setBounds(area);
+
+    layoutPanels();
+}
+
+//==============================================================================
+bool KoeNoteEditor::isInterestedInFileDrag(const juce::StringArray& files)
+{
+    return midiPanel.isInterestedInFileDrag(files);
+}
+
+void KoeNoteEditor::filesDropped(const juce::StringArray& files, int x, int y)
+{
+    midiPanel.filesDropped(files, x, y);
+    tabs.setCurrentTabIndex(2);
 }
 
 //==============================================================================
@@ -260,16 +369,32 @@ void KoeNoteEditor::refreshTarget()
     currentRegion = region;
 
     if (roll.getModification() != modification)
+    {
         roll.setModification(modification);
+        syncSnapFromModel();
+    }
 
-    panel.refresh();
+    noteParams.refresh();
+    refreshPanels();
     updateStatus();
+}
+
+void KoeNoteEditor::refreshPanels()
+{
+    batchPanel.refresh();
+    midiPanel.refresh();
+    toolsPanel.refresh();
 }
 
 void KoeNoteEditor::timerCallback()
 {
     // 選択やリージョンの増減に追従する（ホストがリージョンを破棄しても参照が残らないよう毎回解決する）
-    refreshTarget();
+    juce::ARAPlaybackRegion* region = nullptr;
+    auto* modification = isARAEditorView() ? findModification(&region) : nullptr;
+    currentRegion = region;
+
+    if (roll.getModification() != modification)
+        refreshTarget();
 
     double playhead = -1.0;
 
@@ -285,8 +410,17 @@ void KoeNoteEditor::timerCallback()
 
     roll.setPlayhead(playhead);
 
-    undoButton.setEnabled(roll.getModification() != nullptr && roll.getModification()->getModel().canUndo());
-    redoButton.setEnabled(roll.getModification() != nullptr && roll.getModification()->getModel().canRedo());
+    const auto* target = roll.getModification();
+    undoButton.setEnabled(target != nullptr && target->getModel().canUndo());
+    redoButton.setEnabled(target != nullptr && target->getModel().canRedo());
+    abButton.setToggleState(toolsPanel.isCompareOriginal(), juce::dontSendNotification);
+
+    // ステータスとパネルの表示は、約 3 回/秒で更新する（ニューラルや整列の進捗など）
+    if (++tickCounter % 10 == 0)
+    {
+        refreshPanels();
+        updateStatus();
+    }
 }
 
 void KoeNoteEditor::updateStatus()
@@ -313,6 +447,9 @@ void KoeNoteEditor::updateStatus()
             text = s.statusDone + " - " + juce::String(static_cast<int>(modification->getModel().notes().size())) + " " + s.notes;
             if (modification->isRenderPending())
                 text += " - " + s.statusRendering;
+
+            if (const auto neural = modification->getNeuralInfo(); neural.state == plugin::NeuralInfo::State::Rendering)
+                text += " - " + s.neuralRendering + " " + juce::String(juce::roundToInt(neural.progress * 100.0f)) + "%";
             break;
     }
 

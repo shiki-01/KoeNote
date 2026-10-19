@@ -7,6 +7,7 @@ target_sources(koenote_ui_preview PRIVATE
     main.cpp
     ../../src/ui/NoteParamPanel.cpp
     ../../src/ui/PianoRollView.cpp
+    ../../src/ui/SidePanels.cpp
     ../../src/ui/Strings.cpp)
 
 target_include_directories(koenote_ui_preview PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../src)
@@ -19,6 +20,7 @@ target_link_libraries(koenote_ui_preview
     PRIVATE
         koenote::core
         juce::juce_gui_basics
+        juce::juce_audio_formats
         juce::juce_graphics
     PUBLIC
         juce::juce_recommended_config_flags)

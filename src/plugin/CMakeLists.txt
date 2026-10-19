@@ -23,6 +23,8 @@ target_sources(KoeNote PRIVATE
     KoeNoteAudioModification.cpp
     KoeNoteAudioSource.h
     KoeNoteAudioSource.cpp
+    NeuralService.h
+    NeuralService.cpp
     KoeNoteDocumentController.h
     KoeNoteDocumentController.cpp
     KoeNotePlaybackRenderer.h
@@ -36,6 +38,9 @@ target_sources(KoeNote PRIVATE
     ../ui/NoteParamPanel.cpp
     ../ui/PianoRollView.h
     ../ui/PianoRollView.cpp
+    ../ui/SidePanels.h
+    ../ui/SidePanels.cpp
+    ../ui/SliderRow.h
     ../ui/Strings.h
     ../ui/Strings.cpp)
 

@@ -1,11 +1,13 @@
 #pragma once
 
 #include "model/EditModel.h"
+#include "model/TempoMap.h"
 #include "plugin/SourceAudioData.h"
 
 #include <juce_events/juce_events.h>
 
 #include <memory>
+#include <vector>
 
 namespace koenote::plugin
 {
@@ -15,6 +17,40 @@ enum class AnalysisState
     Analyzing,
     Done,
     Failed
+};
+
+// A/B 比較・バイパス（F-18）。useOriginal が true の間、元の音声を再生する。
+// rangeOnly が true なら、[startSec, endSec]（AudioModification の時間）の範囲だけ元の音声にする。
+struct CompareState
+{
+    bool useOriginal = false;
+    bool rangeOnly = false;
+    double startSec = 0.0;
+    double endSec = 0.0;
+};
+
+// 整列（F-13）のガイドにできる、ドキュメント内の別の音声
+struct GuideCandidate
+{
+    int id = 0;
+    juce::String name;
+    double durationSec = 0.0;
+};
+
+struct AlignInfo
+{
+    enum class State { Idle, Working, Done, Failed };
+    State state = State::Idle;
+    float progress = 0.0f;
+};
+
+// ニューラル加工（F-17）の状態
+struct NeuralInfo
+{
+    enum class State { Unavailable, Idle, Rendering, Ready, Failed };
+    State state = State::Unavailable;
+    float progress = 0.0f;
+    juce::String message; // 利用できない理由、失敗の理由、読み込んだボコーダー名など
 };
 
 // UI が編集する対象の抽象。実体は ARA の AudioModification（KoeNoteAudioModification）。
@@ -51,6 +87,27 @@ public:
 
     // 編集内容を破棄して、元音声から解析し直す
     virtual void requestReanalysis() = 0;
+
+    //==========================================================================
+    // フェーズ2。既定の実装は「機能なし」を表す（プレビュー用の実装が最小限で済むように）。
+
+    // ホストのテンポ情報（F-14）。提供されなければ無効な TempoMap。
+    virtual model::TempoMap getTempoMap() const { return {}; }
+    // 編集の時間軸（AudioModification の時間）→ プロジェクトの時刻（秒）のずれ
+    virtual double getTimeOffsetSec() const { return 0.0; }
+
+    // A/B 比較・バイパス（F-18）
+    virtual void setCompare(const CompareState&) {}
+    virtual CompareState getCompare() const { return {}; }
+
+    // タイミング整列（F-13）。ガイドの音声との DTW で、各ノートのタイミングを合わせる。
+    virtual std::vector<GuideCandidate> getGuideCandidates() const { return {}; }
+    virtual void alignToGuide(int /*guideId*/) {}
+    virtual void alignToGuideAudio(std::shared_ptr<const SourceAudioData> /*guide*/) {}
+    virtual AlignInfo getAlignInfo() const { return {}; }
+
+    // ニューラル加工（F-17）
+    virtual NeuralInfo getNeuralInfo() const { return {}; }
 
 protected:
     // 派生クラスのデストラクタの先頭で呼ぶ

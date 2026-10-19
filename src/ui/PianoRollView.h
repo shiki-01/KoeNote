@@ -1,6 +1,7 @@
 #pragma once
 
 #include "model/Note.h"
+#include "model/Scale.h"
 #include "plugin/EditTarget.h"
 #include "render/TimeMap.h"
 #include "ui/Strings.h"
@@ -17,27 +18,14 @@ enum class Tool
 {
     Select,
     Split,
-    Boundary
+    Boundary,
+    Assign // MIDI の目標ノートへの手動の割り当て（F-12）
 };
 
-enum class SnapMode
-{
-    Off,
-    Semitone,
-    Scale
-};
-
-enum class ScaleType
-{
-    Major,
-    Minor
-};
-
-// 音名に対するスケールの構成音（半音単位、ルートからの距離）
-bool isInScale(int pitchClass, int root, ScaleType scale) noexcept;
-
-// midi を指定のスナップ設定で最も近い音へ丸める
-float snapMidi(float midi, SnapMode mode, int root, ScaleType scale) noexcept;
+using model::ScaleType;
+using model::SnapMode;
+using model::isInScale;
+using model::snapMidi;
 
 // 波形・ノート・ピッチ曲線を表示し、ノートを編集するピアノロール（要件 F-03〜F-07）。
 // 表示する時間軸は出力時間軸（編集後）。すべて message thread で動作する。
@@ -72,6 +60,13 @@ public:
     void resetSelected();
     void selectAll();
     void zoomToFit();
+
+    // 選択ノートの範囲（出力時間軸の秒）。選択がなければ false。A/B 比較の範囲に使う。
+    bool getSelectionRange(double& startSec, double& endSec) const;
+    // 設定（グリッドの分割、BPM、MIDI の目標など）が変わったときに再描画させる
+    void refreshView();
+    // 選択中のノートを 1 つ返す（なければ 0）
+    model::NoteId getPrimarySelection() const noexcept { return selection.empty() ? 0 : *selection.begin(); }
 
     // 選択中のノートの編集パラメータを変更する（スライダー操作用）。
     // begin/end でドラッグ全体を 1 回の Undo にまとめる。
@@ -137,6 +132,8 @@ private:
     void drawCurve(juce::Graphics& g) const;
     void drawWaveform(juce::Graphics& g) const;
     void drawPlayhead(juce::Graphics& g) const;
+    void drawTempoGrid(juce::Graphics& g) const;
+    void drawTargets(juce::Graphics& g) const;
     void drawMessage(juce::Graphics& g, const juce::String& text) const;
 
     // モデル
@@ -148,6 +145,8 @@ private:
     model::EditModel* model() const;
     const model::Note* hitTestNote(juce::Point<float> p, DragKind* edge) const;
     bool hitTestBoundary(juce::Point<float> p, model::NoteId* leftId) const;
+    int hitTestTarget(juce::Point<float> p) const;
+    juce::Rectangle<float> targetBounds(const model::TargetNote& t) const;
     void clampView();
     void applyDrag(const juce::MouseEvent& e);
 
@@ -175,6 +174,9 @@ private:
     std::uint64_t cachedRevision = 0;
     bool cacheValid = false;
     render::TimeMap timeMap;
+    model::TempoMap tempo;
+    double timeOffset = 0.0;
+    std::int64_t tempoRefreshedAt = 0;
     struct CurvePoint
     {
         double outSec;

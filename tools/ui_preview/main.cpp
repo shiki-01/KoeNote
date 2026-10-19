@@ -9,8 +9,11 @@
 #include "analysis/YinPitchAnalyzer.h"
 #include "plugin/EditTarget.h"
 #include "render/PsolaRenderer.h"
+#include "midi/SmfIO.h"
+#include "model/MidiWorkflow.h"
 #include "ui/NoteParamPanel.h"
 #include "ui/PianoRollView.h"
+#include "ui/SidePanels.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -82,6 +85,11 @@ public:
     const model::EditModel& getModel() const noexcept override { return model; }
     void notifyEdited() override { ++notifications; sendChangeMessage(); }
     void requestReanalysis() override {}
+    model::TempoMap getTempoMap() const override { return model::TempoMap::constant(120.0); }
+    plugin::CompareState getCompare() const override { return compare; }
+    void setCompare(const plugin::CompareState& s) override { compare = s; sendChangeMessage(); }
+    plugin::NeuralInfo getNeuralInfo() const override { return { plugin::NeuralInfo::State::Unavailable, 0.0f, "vocoder package not found" }; }
+    plugin::CompareState compare;
     plugin::AnalysisState getAnalysisState() const noexcept override { return plugin::AnalysisState::Done; }
     float getAnalysisProgress() const noexcept override { return 1.0f; }
     bool isRenderPending() const noexcept override { return false; }
@@ -221,6 +229,39 @@ int main(int argc, char** argv)
         roll.zoomToFit();
         writePng(roll, outDir.getChildFile("preview_edited.png"));
         writePng(panel, outDir.getChildFile("preview_panel.png"));
+
+        // MIDI の目標（実際の旋律に近い MIDI を作って取り込み、解析ノートへ対応付ける）
+        midi::MidiSequence seq;
+        for (const auto& n : m.notes())
+            seq.notes.push_back({ n.startSec + 0.05, n.endSec + 0.05, static_cast<int>(std::lround(n.detectedMidi)) + (n.id == 2 ? 1 : 0), 90 });
+        seq.notes.push_back({ 7.2, 7.4, 60, 90 }); // 対応する解析ノートがない MIDI ノート
+        const auto imported = model::importMidi(m.notes(), seq, 0.0);
+        m.setTargets(imported.targets, imported.assignments);
+        std::cout << "midi import: " << imported.assignments.size() << " matched, " << imported.unmatchedAnalysis << " unmatched notes, "
+                  << imported.unmatchedTargets << " unmatched targets\n";
+
+        ui::BatchPanel batch(roll, [] {});
+        ui::MidiPanel midiPanel(roll);
+        ui::ToolsPanel tools(roll);
+        for (auto* p : std::initializer_list<ui::SidePanel*> { &batch, &midiPanel, &tools })
+        {
+            p->setLanguage(ui::Language::Japanese);
+            p->setSize(300, p->getPreferredHeight());
+            p->refresh();
+        }
+        panel.setSize(300, panel.getPreferredHeight());
+        roll.setTool(ui::Tool::Assign);
+        roll.zoomToFit();
+        writePng(roll, outDir.getChildFile("preview_targets.png"));
+        writePng(panel, outDir.getChildFile("preview_panel.png"));
+        writePng(batch, outDir.getChildFile("preview_batch.png"));
+        writePng(midiPanel, outDir.getChildFile("preview_midi.png"));
+        writePng(tools, outDir.getChildFile("preview_tools.png"));
+
+        // 英語表示
+        panel.setLanguage(ui::Language::English);
+        midiPanel.setLanguage(ui::Language::English);
+        writePng(midiPanel, outDir.getChildFile("preview_midi_en.png"));
 
         // 編集内容を反映したレンダリングも実行して時間を確認する
         const float* ptr = target.source->channelPointers[0];

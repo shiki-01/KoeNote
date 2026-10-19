@@ -55,10 +55,10 @@ bool KoeNotePlaybackRenderer::processBlock(juce::AudioBuffer<float>& buffer,
             continue;
 
         auto* modification = static_cast<KoeNoteAudioModification*>(region->getAudioModification());
-        const auto audio = modification->audioForPlayback();
+        const auto views = modification->viewsForPlayback();
 
         // 読み込み未完了のリージョンは鳴らさない（読み込み完了後に鳴る）
-        if (! audio.valid)
+        if (! views.edited.valid)
         {
             anyFailed = true;
             continue;
@@ -70,32 +70,69 @@ bool KoeNotePlaybackRenderer::processBlock(juce::AudioBuffer<float>& buffer,
         const auto count = static_cast<int>(renderRange.getLength());
         const int outChannels = std::min(buffer.getNumChannels(), numChannels);
 
-        if (std::abs(audio.sampleRate - sampleRate) <= 0.5)
-        {
-            // リージョン内の位置 → AudioModification 内の位置への変換。リージョンのタイムストレッチは未対応。
-            const auto offsetToSource = region->getStartInAudioModificationSamples() - regionRange.getStart();
+        // このブロック先頭の、AudioModification 内の時刻（秒）
+        const double modificationStartSec = region->getStartInAudioModificationTime()
+                                            + static_cast<double>(renderRange.getStart() - regionRange.getStart()) / sampleRate;
 
-            render::accumulatePassthrough(audio.view,
-                                          renderRange.getStart() + offsetToSource,
-                                          buffer.getArrayOfWritePointers(),
-                                          outChannels,
-                                          startInBlock,
-                                          count);
+        // [from, to) の出力サンプルを、audio から描画する。
+        const auto renderSegment = [&] (const KoeNoteAudioModification::PlaybackAudio& audio, int from, int to)
+        {
+            if (to <= from)
+                return;
+
+            if (std::abs(audio.sampleRate - sampleRate) <= 0.5)
+            {
+                // リージョン内の位置 → AudioModification 内の位置への変換。リージョンのタイムストレッチは未対応。
+                const auto offsetToSource = region->getStartInAudioModificationSamples() - regionRange.getStart();
+
+                render::accumulatePassthrough(audio.view,
+                                              renderRange.getStart() + offsetToSource + from,
+                                              buffer.getArrayOfWritePointers(),
+                                              outChannels,
+                                              startInBlock + from,
+                                              to - from);
+            }
+            else
+            {
+                // 元音声とプロジェクトのサンプルレートが異なる場合は、線形補間で変換する（簡易的なフォールバック）
+                const double step = audio.sampleRate / sampleRate;
+                const double startPosition = (modificationStartSec + static_cast<double>(from) / sampleRate) * audio.sampleRate;
+
+                render::accumulateResampled(audio.view,
+                                            startPosition,
+                                            step,
+                                            buffer.getArrayOfWritePointers(),
+                                            outChannels,
+                                            startInBlock + from,
+                                            to - from);
+            }
+        };
+
+        const auto& compare = views.compare;
+
+        if (! compare.useOriginal || ! views.original.valid)
+        {
+            renderSegment(views.edited, 0, count);
+        }
+        else if (! compare.rangeOnly)
+        {
+            // バイパス: 全体を元の音声にする
+            renderSegment(views.original, 0, count);
         }
         else
         {
-            // 元音声とプロジェクトのサンプルレートが異なる場合は、線形補間で変換する（簡易的なフォールバック）
-            const double startPosition = (region->getStartInAudioModificationTime()
-                                          + static_cast<double>(renderRange.getStart() - regionRange.getStart()) / sampleRate)
-                                         * audio.sampleRate;
+            // 範囲だけ元の音声にする（A/B 比較）。範囲の前後は編集後の音声。
+            const auto indexOf = [&] (double sec)
+            {
+                return static_cast<int>(std::clamp(std::ceil((sec - modificationStartSec) * sampleRate), 0.0, static_cast<double>(count)));
+            };
 
-            render::accumulateResampled(audio.view,
-                                        startPosition,
-                                        audio.sampleRate / sampleRate,
-                                        buffer.getArrayOfWritePointers(),
-                                        outChannels,
-                                        startInBlock,
-                                        count);
+            const int rangeBegin = indexOf(compare.startSec);
+            const int rangeEnd = std::max(rangeBegin, indexOf(compare.endSec));
+
+            renderSegment(views.edited, 0, rangeBegin);
+            renderSegment(views.original, rangeBegin, rangeEnd);
+            renderSegment(views.edited, rangeEnd, count);
         }
     }
 

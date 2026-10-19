@@ -8,6 +8,7 @@ add_executable(koenote_tests
     test_formant_gain.cpp
     test_passthrough.cpp
     test_pipeline.cpp
+    test_midi_workflow.cpp
     test_neural.cpp
     test_pitch_analysis.cpp
     test_processing_gate.cpp

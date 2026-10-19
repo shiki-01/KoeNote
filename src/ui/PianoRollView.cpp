@@ -1,6 +1,7 @@
 #include "ui/PianoRollView.h"
 
 #include "render/PitchCurveEditor.h"
+#include "ui/Strings.h"
 
 #include <algorithm>
 #include <cmath>
@@ -35,43 +36,6 @@ int pitchClassOf(int midi) noexcept { return ((midi % 12) + 12) % 12; }
 
 double toMidi(double hz) noexcept { return 69.0 + 12.0 * std::log2(hz / 440.0); }
 } // namespace
-
-bool isInScale(int pitchClass, int root, ScaleType scale) noexcept
-{
-    static constexpr bool major[12] = { true, false, true, false, true, true, false, true, false, true, false, true };
-    static constexpr bool minor[12] = { true, false, true, true, false, true, false, true, true, false, true, false };
-    const int rel = (((pitchClass - root) % 12) + 12) % 12;
-    return scale == ScaleType::Major ? major[rel] : minor[rel];
-}
-
-float snapMidi(float midi, SnapMode mode, int root, ScaleType scale) noexcept
-{
-    if (mode == SnapMode::Off)
-        return midi;
-
-    if (mode == SnapMode::Semitone)
-        return std::round(midi);
-
-    const int centre = static_cast<int>(std::round(midi));
-    float best = static_cast<float>(centre);
-    float bestDistance = 1.0e9f;
-
-    for (int candidate = centre - 6; candidate <= centre + 6; ++candidate)
-    {
-        if (! isInScale(pitchClassOf(candidate), root, scale))
-            continue;
-
-        const float distance = std::abs(static_cast<float>(candidate) - midi);
-
-        if (distance < bestDistance)
-        {
-            bestDistance = distance;
-            best = static_cast<float>(candidate);
-        }
-    }
-
-    return best;
-}
 
 //==============================================================================
 PianoRollView::PianoRollView()
@@ -260,9 +224,49 @@ void PianoRollView::zoomToFit()
 
 //==============================================================================
 // キャッシュ
+void PianoRollView::refreshView()
+{
+    tempoRefreshedAt = 0;
+    repaint();
+}
+
+bool PianoRollView::getSelectionRange(double& startSec, double& endSec) const
+{
+    const auto* m = model();
+    if (m == nullptr || selection.empty())
+        return false;
+
+    double lo = 1.0e18, hi = -1.0e18;
+
+    for (const auto id : selection)
+    {
+        if (const auto* n = m->findNote(id))
+        {
+            lo = std::min(lo, n->outStartSec());
+            hi = std::max(hi, n->outEndSec());
+        }
+    }
+
+    if (hi < lo)
+        return false;
+
+    startSec = lo;
+    endSec = hi;
+    return true;
+}
+
 void PianoRollView::refreshCaches()
 {
     auto* m = model();
+
+    // テンポとオフセットは、ホストの状態が変わることがあるため、約 1 秒ごとに取り直す
+    const auto now = static_cast<std::int64_t>(juce::Time::getMillisecondCounter());
+    if (current != nullptr && (tempoRefreshedAt == 0 || now - tempoRefreshedAt > 1000))
+    {
+        tempo = current->getTempoMap();
+        timeOffset = current->getTimeOffsetSec();
+        tempoRefreshedAt = now;
+    }
 
     if (m == nullptr || ! m->hasAnalysis())
     {
@@ -443,6 +447,8 @@ void PianoRollView::paint(juce::Graphics& g)
     {
         g.saveState();
         g.reduceClipRegion(getRollArea());
+        drawTempoGrid(g);
+        drawTargets(g);
         drawNotes(g);
         drawCurve(g);
         drawPlayhead(g);
@@ -706,6 +712,99 @@ void PianoRollView::drawWaveform(juce::Graphics& g) const
     }
 }
 
+void PianoRollView::drawTempoGrid(juce::Graphics& g) const
+{
+    const auto* m = model();
+    if (m == nullptr || ! tempo.valid())
+        return;
+
+    // グリッドの間隔（四分音符単位）。ズームが小さい間は粗くする（線の間隔が 8 px 未満にならないように）。
+    static constexpr double kDivisions[] = { 1.0, 0.5, 0.25, 0.125 };
+    double grid = kDivisions[std::clamp<int>(m->settings().gridDivision, 0, 3)];
+
+    const auto roll = getRollArea();
+    const double t0 = secOfX(static_cast<float>(roll.getX())) + timeOffset;
+    const double t1 = secOfX(static_cast<float>(roll.getRight())) + timeOffset;
+    const double q0 = tempo.secToQuarter(t0);
+    const double q1 = tempo.secToQuarter(t1);
+
+    while (grid < 64.0 && (tempo.quarterToSec(q0 + grid) - tempo.quarterToSec(q0)) * pixelsPerSec < 8.0)
+        grid *= 2.0;
+
+    const double first = std::ceil(q0 / grid) * grid;
+
+    for (double q = first; q <= q1 && q - first < 4000.0 * grid; q += grid)
+    {
+        const double sec = tempo.quarterToSec(q) - timeOffset;
+        const float x = xOfSec(sec);
+        const bool beat = std::abs(q - std::round(q)) < 1.0e-6;
+        const bool bar = beat && std::abs(std::fmod(std::round(q), 4.0)) < 1.0e-6;
+
+        g.setColour(bar ? juce::Colour(0xff6f7a8c).withAlpha(0.55f) : (beat ? juce::Colour(0xff505a6b).withAlpha(0.45f) : juce::Colour(0xff3c4452).withAlpha(0.35f)));
+        g.drawVerticalLine(static_cast<int>(x), static_cast<float>(roll.getY()), static_cast<float>(roll.getBottom()));
+    }
+}
+
+juce::Rectangle<float> PianoRollView::targetBounds(const model::TargetNote& t) const
+{
+    const float x0 = xOfSec(t.startSec);
+    const float x1 = xOfSec(t.endSec);
+    const float h = static_cast<float>(pixelsPerSemitone) * 0.82f;
+    const float cy = yOfMidi(t.midi);
+    return { x0, cy - h * 0.5f, std::max(2.0f, x1 - x0), h };
+}
+
+int PianoRollView::hitTestTarget(juce::Point<float> p) const
+{
+    const auto* m = model();
+    if (m == nullptr)
+        return -1;
+
+    for (std::size_t i = 0; i < m->targets().size(); ++i)
+        if (targetBounds(m->targets()[i]).expanded(0.0f, 2.0f).contains(p))
+            return static_cast<int>(i);
+
+    return -1;
+}
+
+void PianoRollView::drawTargets(juce::Graphics& g) const
+{
+    const auto* m = model();
+    if (m == nullptr || m->targets().empty())
+        return;
+
+    const auto roll = getRollArea().toFloat();
+    std::vector<char> assigned(m->targets().size(), 0);
+
+    // 割り当ての線（解析ノート → 目標）
+    for (const auto& note : m->notes())
+    {
+        const int index = m->assignmentOf(note.id);
+        if (index < 0 || static_cast<std::size_t>(index) >= m->targets().size())
+            continue;
+
+        assigned[static_cast<std::size_t>(index)] = 1;
+        const auto a = noteBounds(note).getCentre();
+        const auto b = targetBounds(m->targets()[static_cast<std::size_t>(index)]).getCentre();
+
+        if (roll.contains(a) || roll.contains(b))
+        {
+            g.setColour(juce::Colour(0xff8be28b).withAlpha(0.55f));
+            g.drawLine(a.x, a.y, b.x, b.y, 1.0f);
+        }
+    }
+
+    for (std::size_t i = 0; i < m->targets().size(); ++i)
+    {
+        const auto b = targetBounds(m->targets()[i]);
+        if (! b.intersects(roll))
+            continue;
+
+        g.setColour((assigned[i] ? juce::Colour(0xff8be28b) : juce::Colour(0xffe2a08b)).withAlpha(0.9f));
+        g.drawRoundedRectangle(b, 2.0f, 1.5f);
+    }
+}
+
 void PianoRollView::drawPlayhead(juce::Graphics& g) const
 {
     if (playheadSec < 0.0)
@@ -874,6 +973,27 @@ void PianoRollView::mouseDown(const juce::MouseEvent& e)
             drag.primary = left;
             m->beginEdit();
             editGestureOpen = true;
+        }
+
+        return;
+    }
+
+    if (tool == Tool::Assign)
+    {
+        // 目標をクリック → 選択中のノートへ割り当て。解析ノートをクリック → 選択。
+        const int targetIndex = hitTestTarget(e.position);
+
+        if (targetIndex >= 0)
+        {
+            if (const auto id = getPrimarySelection(); id != 0)
+            {
+                m->assignTarget(id, targetIndex);
+                notifyModelEdited(true);
+            }
+        }
+        else if (const auto* hit = hitTestNote(e.position, nullptr))
+        {
+            setSelection({ hit->id });
         }
 
         return;

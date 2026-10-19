@@ -28,6 +28,8 @@ add_library(koenote_core STATIC
     analysis/RuleBasedNoteSegmenter.cpp
     model/BatchCorrection.h
     model/BatchCorrection.cpp
+    model/MidiWorkflow.h
+    model/MidiWorkflow.cpp
     model/ModelVersion.h
     model/Scale.h
     model/TempoMap.h
