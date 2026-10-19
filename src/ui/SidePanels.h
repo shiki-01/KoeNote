@@ -10,6 +10,8 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <utility>
+#include <vector>
 
 namespace koenote::ui
 {
@@ -51,6 +53,10 @@ private:
     void apply(bool selectedOnly);
     void detectKey();
     void commitBpm();
+    void commitDeviation();
+    // MIX 向けの一括操作（F-24〜F-26）。選択ノート（選択がなければ全ノート）へ適用する
+    void applyMix(const std::function<std::vector<std::pair<model::NoteId, model::NoteEdit>>(const std::vector<model::Note>&,
+                                                                                               const std::vector<model::NoteId>&)>& compute);
     void updateTexts();
 
     std::function<void()> snapSettingsChanged;
@@ -62,6 +68,11 @@ private:
     juce::ToggleButton keepDuration;
     juce::TextEditor bpmEditor;
     juce::TextButton applySelected, applyAll, detect;
+
+    // MIX 向け（F-24〜F-28）
+    juce::Label mixTitle, mixHint, deviationHint;
+    SliderRow levelStrength, breathGain, sibilanceGain, deviation;
+    juce::TextButton levelApply, breathApply, sibilanceApply, clearDrawing;
 };
 
 //==============================================================================
@@ -134,6 +145,7 @@ private:
     double currentOffset() const;
     void refreshGuides();
     void toggleNeural();
+    void applyFollow();
     void updateTexts();
 
     juce::Label rangeTitle, rangeStatus;
@@ -144,6 +156,11 @@ private:
     juce::ToggleButton compareOriginal, compareRange, neuralEnable;
     juce::ComboBox guideBox;
     juce::TextButton alignRun, alignFile;
+    // ガイドのピッチへの追従（F-29）
+    juce::Label followTitle, followStatus;
+    juce::ComboBox followMode;
+    SliderRow followStrength;
+    juce::TextButton followApply;
     std::unique_ptr<juce::FileChooser> chooser;
     int lastGuideCount = -1;
     bool updating = false;

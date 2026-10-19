@@ -1,5 +1,6 @@
 #include "ui/NoteParamPanel.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace koenote::ui
@@ -14,6 +15,19 @@ NoteParamPanel::NoteParamPanel(PianoRollView& view) : roll(view)
     setupRow(drift, 0.0, 2.0, 0.01, 1.0, F::Percent, [] (model::NoteEdit& e, float v) { e.driftScale = v; });
     setupRow(transition, 0.0, 1.0, 0.01, 0.0, F::Percent, [] (model::NoteEdit& e, float v) { e.transitionSmoothness = v; });
 
+    // 頭・尻の補正の除外（F-23）。値は秒で持ち、表示はミリ秒
+    const auto clampHold = [] (float v) { return std::clamp(v, 0.0f, model::NoteEdit::kMaxHoldSec); };
+    setupRow(attackHold, 0.0, model::NoteEdit::kMaxHoldSec, 0.01, 0.0, F::Plain,
+             [clampHold] (model::NoteEdit& e, float v) { e.attackHoldSec = clampHold(v); });
+    setupRow(releaseHold, 0.0, model::NoteEdit::kMaxHoldSec, 0.01, 0.0, F::Plain,
+             [clampHold] (model::NoteEdit& e, float v) { e.releaseHoldSec = clampHold(v); });
+    for (auto* row : { &attackHold, &releaseHold })
+    {
+        row->slider.textFromValueFunction = [] (double v) { return juce::String(juce::roundToInt(v * 1000.0)) + " ms"; };
+        row->slider.valueFromTextFunction = [] (const juce::String& t) { return t.getDoubleValue() / 1000.0; };
+        row->slider.updateText();
+    }
+
     // フォルマントは ±600 セントまで（TD-PSOLA で自然に聞こえる範囲）
     setupRow(formant, -600.0, 600.0, 1.0, 0.0, F::Cents, [] (model::NoteEdit& e, float v) { e.formantShiftCents = v; });
     setupRow(formantFollow, 0.0, 1.0, 0.01, 0.0, F::Percent, [] (model::NoteEdit& e, float v) { e.formantFollow = v; });
@@ -21,6 +35,7 @@ NoteParamPanel::NoteParamPanel(PianoRollView& view) : roll(view)
     setupRow(gain, -24.0, 12.0, 0.1, 0.0, F::Db, [] (model::NoteEdit& e, float v) { e.gainDb = v; });
     setupRow(consonant, -24.0, 12.0, 0.1, 0.0, F::Db, [] (model::NoteEdit& e, float v) { e.consonantGainDb = v; });
     setupRow(breath, -24.0, 12.0, 0.1, 0.0, F::Db, [] (model::NoteEdit& e, float v) { e.breathGainDb = v; });
+    setupRow(sibilance, -24.0, 12.0, 0.1, 0.0, F::Db, [] (model::NoteEdit& e, float v) { e.sibilanceGainDb = v; });
 
     for (auto* l : { &pitchSection, &formantSection, &gainSection })
     {
@@ -71,11 +86,14 @@ void NoteParamPanel::updateTexts()
     vibrato.label.setText(s.paramVibrato, juce::dontSendNotification);
     drift.label.setText(s.paramDrift, juce::dontSendNotification);
     transition.label.setText(s.paramTransition, juce::dontSendNotification);
+    attackHold.label.setText(s.paramAttackHold, juce::dontSendNotification);
+    releaseHold.label.setText(s.paramReleaseHold, juce::dontSendNotification);
     formant.label.setText(s.paramFormant, juce::dontSendNotification);
     formantFollow.label.setText(s.paramFormantFollow, juce::dontSendNotification);
     gain.label.setText(s.paramGain, juce::dontSendNotification);
     consonant.label.setText(s.paramConsonant, juce::dontSendNotification);
     breath.label.setText(s.paramBreath, juce::dontSendNotification);
+    sibilance.label.setText(s.paramSibilance, juce::dontSendNotification);
     emptyHint.setText(s.paramNone, juce::dontSendNotification);
 
     pitchSection.setText(language == Language::Japanese ? juce::String::fromUTF8("ピッチ") : juce::String("Pitch"), juce::dontSendNotification);
@@ -95,7 +113,8 @@ void NoteParamPanel::refresh()
 
     const juce::ScopedValueSetter<bool> guard(updating, true);
 
-    for (auto* row : { &center, &vibrato, &drift, &transition, &formant, &formantFollow, &gain, &consonant, &breath })
+    for (auto* row : { &center, &vibrato, &drift, &transition, &attackHold, &releaseHold, &formant, &formantFollow, &gain, &consonant, &breath,
+                       &sibilance })
         row->setEnabledState(hasNote);
 
     emptyHint.setVisible(! hasNote);
@@ -107,11 +126,14 @@ void NoteParamPanel::refresh()
         vibrato.slider.setValue(first->edit.vibratoScale, juce::dontSendNotification);
         drift.slider.setValue(first->edit.driftScale, juce::dontSendNotification);
         transition.slider.setValue(first->edit.transitionSmoothness, juce::dontSendNotification);
+        attackHold.slider.setValue(first->edit.attackHoldSec, juce::dontSendNotification);
+        releaseHold.slider.setValue(first->edit.releaseHoldSec, juce::dontSendNotification);
         formant.slider.setValue(first->edit.formantShiftCents, juce::dontSendNotification);
         formantFollow.slider.setValue(first->edit.formantFollow, juce::dontSendNotification);
         gain.slider.setValue(first->edit.gainDb, juce::dontSendNotification);
         consonant.slider.setValue(first->edit.consonantGainDb, juce::dontSendNotification);
         breath.slider.setValue(first->edit.breathGainDb, juce::dontSendNotification);
+        sibilance.slider.setValue(first->edit.sibilanceGainDb, juce::dontSendNotification);
 
         const float semitones = first->edit.pitchOffsetCents / 100.0f;
         pitchInfo.setText(getStrings(language).paramPitch + ": " + (semitones >= 0.0f ? "+" : "") + juce::String(semitones, 2) + " st",
@@ -121,8 +143,8 @@ void NoteParamPanel::refresh()
 
 int NoteParamPanel::getPreferredHeight() const noexcept
 {
-    // ピッチ情報 + 見出し 3 + スライダー 9 行
-    return 8 + 22 + 6 + 3 * 24 + 9 * SliderRow::kHeight + 20;
+    // ピッチ情報 + 見出し 3 + スライダー 12 行
+    return 8 + 22 + 6 + 3 * 24 + 12 * SliderRow::kHeight + 20;
 }
 
 void NoteParamPanel::paint(juce::Graphics& g)
@@ -139,7 +161,7 @@ void NoteParamPanel::resized()
     area.removeFromTop(6);
 
     pitchSection.setBounds(area.removeFromTop(24));
-    for (auto* row : { &center, &vibrato, &drift, &transition })
+    for (auto* row : { &center, &vibrato, &drift, &transition, &attackHold, &releaseHold })
         row->place(area);
 
     formantSection.setBounds(area.removeFromTop(24));
@@ -147,7 +169,7 @@ void NoteParamPanel::resized()
         row->place(area);
 
     gainSection.setBounds(area.removeFromTop(24));
-    for (auto* row : { &gain, &consonant, &breath })
+    for (auto* row : { &gain, &consonant, &breath, &sibilance })
         row->place(area);
 }
 } // namespace koenote::ui

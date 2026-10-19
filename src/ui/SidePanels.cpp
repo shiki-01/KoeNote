@@ -3,6 +3,7 @@
 #include "analysis/KeyDetector.h"
 #include "model/BatchCorrection.h"
 #include "model/MidiWorkflow.h"
+#include "model/MixCorrection.h"
 
 #include <juce_audio_formats/juce_audio_formats.h>
 
@@ -92,6 +93,43 @@ BatchPanel::BatchPanel(PianoRollView& r, std::function<void()> onSnapSettingsCha
     for (auto* b : { &applySelected, &applyAll, &detect })
         addAndMakeVisible(*b);
 
+    // MIX 向け
+    styleSectionLabel(mixTitle);
+    addAndMakeVisible(mixTitle);
+    for (auto* l : { &mixHint, &deviationHint })
+    {
+        styleHint(*l);
+        addAndMakeVisible(*l);
+    }
+
+    levelStrength.init(*this, 0.0, 1.0, 0.01, 0.5, F::Percent);
+    breathGain.init(*this, -24.0, 0.0, 0.5, -6.0, F::Db);
+    sibilanceGain.init(*this, -24.0, 0.0, 0.5, -6.0, F::Db);
+    deviation.init(*this, 0.0, 100.0, 1.0, 0.0, F::Cents);
+    levelStrength.slider.setValue(0.5, juce::dontSendNotification);
+    breathGain.slider.setValue(-6.0, juce::dontSendNotification);
+    sibilanceGain.slider.setValue(-6.0, juce::dontSendNotification);
+    deviation.slider.onValueChange = [this] { commitDeviation(); };
+
+    levelApply.onClick = [this]
+    {
+        const auto strength = static_cast<float>(levelStrength.slider.getValue());
+        applyMix([strength] (const auto& notes, const auto& ids) { return model::computeLevelingEdits(notes, ids, strength); });
+    };
+    breathApply.onClick = [this]
+    {
+        const auto db = static_cast<float>(breathGain.slider.getValue());
+        applyMix([db] (const auto& notes, const auto& ids) { return model::computeGainEdits(notes, ids, model::GainTarget::Breath, db); });
+    };
+    sibilanceApply.onClick = [this]
+    {
+        const auto db = static_cast<float>(sibilanceGain.slider.getValue());
+        applyMix([db] (const auto& notes, const auto& ids) { return model::computeGainEdits(notes, ids, model::GainTarget::Sibilance, db); });
+    };
+    clearDrawing.onClick = [this] { roll.clearDrawing(); };
+    for (auto* b : { &levelApply, &breathApply, &sibilanceApply, &clearDrawing })
+        addAndMakeVisible(*b);
+
     updateTexts();
     refresh();
 }
@@ -117,6 +155,18 @@ void BatchPanel::updateTexts()
     applyAll.setButtonText(s.batchApplyAll);
     detect.setButtonText(s.batchDetectKey);
 
+    mixTitle.setText(s.mixTitle, juce::dontSendNotification);
+    mixHint.setText(s.mixScopeHint, juce::dontSendNotification);
+    levelStrength.label.setText(s.mixLevelStrength, juce::dontSendNotification);
+    levelApply.setButtonText(s.mixLevelApply);
+    breathGain.label.setText(s.mixBreath, juce::dontSendNotification);
+    breathApply.setButtonText(s.mixBreathApply);
+    sibilanceGain.label.setText(s.mixSibilance, juce::dontSendNotification);
+    sibilanceApply.setButtonText(s.mixSibilanceApply);
+    deviation.label.setText(s.mixDeviation, juce::dontSendNotification);
+    deviationHint.setText(s.mixDeviationHint, juce::dontSendNotification);
+    clearDrawing.setButtonText(s.mixClearDrawing);
+
     const juce::ScopedValueSetter<bool> guard(updating, true);
     const int selected = gridBox.getSelectedId();
     gridBox.clear(juce::dontSendNotification);
@@ -133,14 +183,18 @@ void BatchPanel::refresh()
     const juce::ScopedValueSetter<bool> guard(updating, true);
 
     const bool hasModel = t != nullptr && t->getModel().hasAnalysis();
-    for (auto* c : std::initializer_list<juce::Component*> { &gridBox, &keepDuration, &bpmEditor, &applySelected, &applyAll, &detect })
+    for (auto* c : std::initializer_list<juce::Component*> { &gridBox, &keepDuration, &bpmEditor, &applySelected, &applyAll, &detect, &levelApply,
+                                                             &breathApply, &sibilanceApply, &clearDrawing })
         c->setEnabled(hasModel);
+    for (auto* row : { &levelStrength, &breathGain, &sibilanceGain, &deviation })
+        row->setEnabledState(hasModel);
 
     if (! hasModel)
         return;
 
     const auto& settings = t->getModel().settings();
     gridBox.setSelectedId(std::clamp<int>(settings.gridDivision, 0, 3) + 1, juce::dontSendNotification);
+    deviation.slider.setValue(settings.deviationThresholdCents, juce::dontSendNotification);
 
     if (! bpmEditor.hasKeyboardFocus(true))
         bpmEditor.setText(settings.manualBpm > 0.0f ? juce::String(settings.manualBpm, 1) : juce::String(), false);
@@ -162,6 +216,33 @@ void BatchPanel::commitBpm()
     t->getModel().setSettings(s);
     roll.refreshView();
     refresh();
+}
+
+void BatchPanel::commitDeviation()
+{
+    auto* t = target();
+    if (t == nullptr || updating)
+        return;
+
+    // 表示だけに使う設定のため、音声の再レンダリング（notifyEdited）は不要
+    auto s = t->getModel().settings();
+    s.deviationThresholdCents = static_cast<std::uint8_t>(std::clamp(juce::roundToInt(deviation.slider.getValue()), 0, 100));
+    t->getModel().setSettings(s);
+    roll.refreshView();
+}
+
+void BatchPanel::applyMix(const std::function<std::vector<std::pair<model::NoteId, model::NoteEdit>>(const std::vector<model::Note>&,
+                                                                                                       const std::vector<model::NoteId>&)>& compute)
+{
+    auto* t = target();
+    if (t == nullptr || ! t->getModel().hasAnalysis())
+        return;
+
+    // 空なら全ノートが対象
+    const std::vector<model::NoteId> ids(roll.getSelection().begin(), roll.getSelection().end());
+
+    // applyEdits がホストへの通知まで行う
+    roll.applyEdits(compute(t->getModel().notes(), ids));
 }
 
 void BatchPanel::apply(bool selectedOnly)
@@ -238,7 +319,9 @@ void BatchPanel::detectKey()
 
 int BatchPanel::getPreferredHeight() const noexcept
 {
-    return 8 + 24 + 3 * SliderRow::kHeight + 18 + 24 + 8 + 28 + 18 + 24 + 8 + 40 + 36 + 36 + 6 + 36 + 6 + 40 + 16;
+    return 8 + 24 + 3 * SliderRow::kHeight + 18 + 24 + 8 + 28 + 18 + 24 + 8 + 40 + 36 + 36 + 6 + 36 + 6 + 40 + 16
+           // MIX 向け
+           + 14 + 24 + 34 + 4 * SliderRow::kHeight + 3 * (30 + 8) + 34 + 6 + 30;
 }
 
 void BatchPanel::resized()
@@ -267,6 +350,23 @@ void BatchPanel::resized()
     detect.setBounds(area.removeFromTop(36).reduced(2, 0));
     area.removeFromTop(6);
     keyResult.setBounds(area.removeFromTop(40));
+    area.removeFromTop(14);
+
+    mixTitle.setBounds(area.removeFromTop(24));
+    mixHint.setBounds(area.removeFromTop(34));
+
+    for (auto [rowControl, button] : { std::pair { &levelStrength, &levelApply }, std::pair { &breathGain, &breathApply },
+                                       std::pair { &sibilanceGain, &sibilanceApply } })
+    {
+        rowControl->place(area);
+        button->setBounds(area.removeFromTop(30).reduced(2, 0));
+        area.removeFromTop(8);
+    }
+
+    deviation.place(area);
+    deviationHint.setBounds(area.removeFromTop(34));
+    area.removeFromTop(6);
+    clearDrawing.setBounds(area.removeFromTop(30).reduced(2, 0));
 }
 
 //==============================================================================
@@ -680,13 +780,13 @@ ToolsPanel::ToolsPanel(PianoRollView& r) : SidePanel(r)
 {
     language = detectDefaultLanguage();
 
-    for (auto* l : { &compareTitle, &alignTitle, &neuralTitle, &rangeTitle })
+    for (auto* l : { &compareTitle, &alignTitle, &neuralTitle, &rangeTitle, &followTitle })
     {
         styleSectionLabel(*l);
         addAndMakeVisible(*l);
     }
 
-    for (auto* l : { &alignStatus, &neuralStatus, &neuralHint, &offsetHint, &rangeStatus })
+    for (auto* l : { &alignStatus, &neuralStatus, &neuralHint, &offsetHint, &rangeStatus, &followStatus })
     {
         styleHint(*l);
         addAndMakeVisible(*l);
@@ -739,6 +839,13 @@ ToolsPanel::ToolsPanel(PianoRollView& r) : SidePanel(r)
     addAndMakeVisible(alignRun);
     addAndMakeVisible(alignFile);
 
+    // ガイドのピッチへの追従
+    addAndMakeVisible(followMode);
+    followStrength.init(*this, 0.0, 1.0, 0.01, 1.0, SliderRow::Format::Percent);
+    followStrength.slider.setValue(1.0, juce::dontSendNotification);
+    followApply.onClick = [this] { applyFollow(); };
+    addAndMakeVisible(followApply);
+
     updateTexts();
     refresh();
 }
@@ -768,6 +875,17 @@ void ToolsPanel::updateTexts()
     offsetHint.setText(s.alignOffsetHint, juce::dontSendNotification);
     neuralTitle.setText(s.neuralTitle, juce::dontSendNotification);
     neuralEnable.setButtonText(s.neuralEnable);
+
+    followTitle.setText(s.followTitle, juce::dontSendNotification);
+    followStrength.label.setText(s.followStrength, juce::dontSendNotification);
+    followApply.setButtonText(s.followApply);
+    {
+        const int selected = followMode.getSelectedId();
+        followMode.clear(juce::dontSendNotification);
+        followMode.addItem(s.followUnison, 1);
+        followMode.addItem(s.followInterval, 2);
+        followMode.setSelectedId(selected > 0 ? selected : 1, juce::dontSendNotification);
+    }
 
     const auto dir = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile("KoeNote").getChildFile("neural");
     neuralHint.setText(s.neuralFolderHint + dir.getFullPathName(), juce::dontSendNotification);
@@ -916,6 +1034,34 @@ void ToolsPanel::toggleNeural()
     t->notifyEdited();
 }
 
+void ToolsPanel::applyFollow()
+{
+    auto* t = target();
+    if (t == nullptr || ! t->getModel().hasAnalysis())
+        return;
+
+    const auto& s = getStrings(language);
+    const auto guide = t->getGuide();
+    if (! guide.active || guide.analysis == nullptr)
+    {
+        followStatus.setText(s.followNoGuide, juce::dontSendNotification);
+        return;
+    }
+
+    model::GuideFollowParams p;
+    p.mode = followMode.getSelectedId() == 2 ? model::GuideFollowParams::Mode::KeepInterval : model::GuideFollowParams::Mode::Unison;
+    p.strength = static_cast<float>(followStrength.slider.getValue());
+    p.offsetSec = guide.offsetSec;
+
+    // 空なら全ノートが対象
+    const std::vector<model::NoteId> ids(roll.getSelection().begin(), roll.getSelection().end());
+
+    int matched = 0;
+    const auto edits = model::computeGuidePitchEdits(t->getModel().notes(), ids, guide.analysis->notes, p, &matched);
+    roll.applyEdits(edits);
+    followStatus.setText(s.followResult.replace("%n", juce::String(matched)), juce::dontSendNotification);
+}
+
 void ToolsPanel::refresh()
 {
     auto* t = target();
@@ -923,8 +1069,10 @@ void ToolsPanel::refresh()
     const auto& s = getStrings(language);
 
     const bool hasModel = t != nullptr && t->getModel().hasAnalysis();
-    for (auto* c : std::initializer_list<juce::Component*> { &compareOriginal, &compareRange, &guideBox, &alignRun, &alignFile, &neuralEnable })
+    for (auto* c : std::initializer_list<juce::Component*> { &compareOriginal, &compareRange, &guideBox, &alignRun, &alignFile, &neuralEnable,
+                                                             &followMode, &followApply })
         c->setEnabled(hasModel);
+    followStrength.setEnabledState(hasModel);
 
     if (! hasModel)
         return;
@@ -945,6 +1093,7 @@ void ToolsPanel::refresh()
         c->setEnabled(guide.active);
 
     alignRun.setEnabled(guide.analysis != nullptr);
+    followApply.setEnabled(guide.active && guide.analysis != nullptr);
 
     if (! offsetEditor.hasKeyboardFocus(true))
         offsetEditor.setText(juce::String(guide.offsetSec, 3), false);
@@ -995,7 +1144,9 @@ void ToolsPanel::refresh()
 
 int ToolsPanel::getPreferredHeight() const noexcept
 {
-    return 8 + 24 + 28 * 2 + 14 + (24 + 86 + 30 + 14) + 24 + 18 + 24 + 8 + 36 + 22 + 18 + 28 + 6 + 36 + 6 + 110 + 14 + 24 + 28 + 56 + 80 + 16;
+    return 8 + 24 + 28 * 2 + 14 + (24 + 86 + 30 + 14) + 24 + 18 + 24 + 8 + 36 + 22 + 18 + 28 + 6 + 36 + 6 + 110 + 14 + 24 + 28 + 56 + 80 + 16
+           // ガイドのピッチへの追従
+           + 24 + 24 + 8 + SliderRow::kHeight + 30 + 22 + 14;
 }
 
 void ToolsPanel::resized()
@@ -1032,6 +1183,14 @@ void ToolsPanel::resized()
     guideClear.setBounds(area.removeFromTop(36).removeFromLeft(150).reduced(2, 0));
     area.removeFromTop(6);
     offsetHint.setBounds(area.removeFromTop(110));
+    area.removeFromTop(14);
+
+    followTitle.setBounds(area.removeFromTop(24));
+    followMode.setBounds(area.removeFromTop(24));
+    area.removeFromTop(8);
+    followStrength.place(area);
+    followApply.setBounds(area.removeFromTop(30).reduced(2, 0));
+    followStatus.setBounds(area.removeFromTop(22));
     area.removeFromTop(14);
 
     neuralTitle.setBounds(area.removeFromTop(24));

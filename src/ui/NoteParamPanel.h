@@ -36,8 +36,8 @@ private:
     Language language = Language::Japanese;
     bool updating = false;
 
-    SliderRow center, vibrato, drift, transition;
-    SliderRow gain, formant, formantFollow, consonant, breath;
+    SliderRow center, vibrato, drift, transition, attackHold, releaseHold;
+    SliderRow gain, formant, formantFollow, consonant, breath, sibilance;
     juce::Label pitchInfo;
     juce::Label emptyHint;
     juce::Label pitchSection, formantSection, gainSection;
