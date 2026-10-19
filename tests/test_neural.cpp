@@ -216,7 +216,9 @@ TEST_CASE("ボコーダーのパッケージが無い場合は利用不可にな
 }
 
 // --- 以下は、実際のモデルが利用できる環境（KOENOTE_NEURAL_DIR）でのみ実行する ---
-TEST_CASE("実モデル: ピッチ編集と時間伸縮を反映した音声を合成できる")
+namespace
+{
+void checkRealModel(double sampleRate)
 {
     const char* dir = std::getenv("KOENOTE_NEURAL_DIR");
     if (dir == nullptr)
@@ -235,7 +237,7 @@ TEST_CASE("実モデル: ピッチ編集と時間伸縮を反映した音声を�
     REQUIRE(vocoder != nullptr);
 
     // 声に近い合成音（220 Hz 1 秒 → 無音 → 261.63 Hz 1 秒、44.1 kHz）
-    constexpr double sr = 44100.0;
+    const double sr = sampleRate;
     std::vector<float> voice(static_cast<std::size_t>(3.0 * sr), 0.0f);
     double phase = 0.0;
     for (std::size_t i = 0; i < voice.size(); ++i)
@@ -306,4 +308,15 @@ TEST_CASE("実モデル: ピッチ編集と時間伸縮を反映した音声を�
     const double secondCents = 1200.0 * std::log2(medianF0(2.1, 2.7) / 261.63);
     std::cout << "second note: median f0 " << medianF0(2.1, 2.7) << " Hz, error " << secondCents << " cents\n";
     CHECK(std::abs(secondCents) < 50.0);
+}
+} // namespace
+
+TEST_CASE("実モデル: ピッチ編集と時間伸縮を反映した音声を合成できる（44.1 kHz）")
+{
+    checkRealModel(44100.0);
+}
+
+TEST_CASE("実モデル: ピッチ編集と時間伸縮を反映した音声を合成できる（48 kHz。リサンプルを含む）")
+{
+    checkRealModel(48000.0);
 }
