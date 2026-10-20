@@ -2,9 +2,12 @@ name: Release
 
 # v で始まるタグ（例: v0.1.0）を push すると、ビルド・テストの後に zip とインストーラーを作り、
 # GitHub Releases に下書き（draft）として置く。内容を確認してから、GitHub の画面で公開する。
+# 手動実行（workflow_dispatch）では、CMakeLists.txt のバージョンで同じ手順を通し、Releases は作らずに
+# zip とインストーラーを Actions の成果物（artifact）として置く（リリース前の試運転用）。
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -22,12 +25,14 @@ jobs:
         id: version
         shell: pwsh
         run: |
-          $tag = "${{ github.ref_name }}"
-          $version = $tag.TrimStart('v')
-          # CMakeLists.txt の project(... VERSION x.y.z) とタグを一致させる
           $cmake = Get-Content CMakeLists.txt -Raw
           if ($cmake -notmatch 'project\(KoeNote VERSION ([0-9.]+)') { throw "CMakeLists.txt のバージョンが読めません" }
-          if ($Matches[1] -ne $version) { throw "タグ ($version) と CMakeLists.txt のバージョン ($($Matches[1])) が一致しません" }
+          $version = $Matches[1]
+          if ("${{ github.ref_type }}" -eq "tag") {
+            # CMakeLists.txt の project(... VERSION x.y.z) とタグを一致させる
+            $tagVersion = "${{ github.ref_name }}".TrimStart('v')
+            if ($tagVersion -ne $version) { throw "タグ ($tagVersion) と CMakeLists.txt のバージョン ($version) が一致しません" }
+          }
           "version=$version" >> $env:GITHUB_OUTPUT
 
       - name: Configure
@@ -62,7 +67,17 @@ jobs:
           & $iscc "/DAppVersion=$version" "/DSourceRoot=$PWD" "/DVst3Dir=$PWD\build\src\plugin\KoeNote_artefacts\Release\VST3\KoeNote.vst3" "/O$PWD\dist" installer\KoeNote.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC が失敗しました" }
 
+      - name: Upload artifacts (manual run)
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: KoeNote-${{ steps.version.outputs.version }}-windows-x64
+          path: |
+            dist/*.zip
+            dist/*-setup.exe
+
       - name: Create draft release
+        if: github.ref_type == 'tag'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}

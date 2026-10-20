@@ -7,14 +7,14 @@ Melodyne 型のノート単位ボーカル編集プラグイン。ARA2 対応 VS
 
 - フェーズ0（ARA パススルー）、フェーズ1（MVP: F-01〜F-08）、フェーズ2（F-09〜F-18）、MIX 向けの機能（F-22〜F-29。2026-10 に追加）の実装が完了。
   v1.0 前の改善（書き出し時のニューラル完了待ち、拍子、sinc のレート変換、ホストの選択範囲の表示）も実装済み。
-  フェーズ0・1 は Cakewalk Sonar でユーザーが確認済み。**フェーズ2 以降の Sonar 実機確認は未実施**（手順・確認項目は [docs/dev-setup.md](docs/dev-setup.md) の 4.4）。
+  Cakewalk Sonar での実機確認（[docs/dev-setup.md](docs/dev-setup.md) の 4.4 の全項目）はユーザーが完了と報告済み（フェーズ0・1 は以前に、フェーズ2 以降は 2026-10-20）。REAPER では未確認。
 - 配布は GitHub Releases のみ（zip と Inno Setup のインストーラー。タグの push で `release.yml` が下書きを作る）。利用者向けの説明書は [docs/user-guide.md](docs/user-guide.md)。
 - 検証済み: Catch2 単体テスト（約 190 件）、RenderEngine の結合テスト（JUCE コンソールアプリ）、pluginval（strictness 5）、ARA Test Host（9 シナリオ）、
   実モデル（PC-NSF-HiFiGAN）でのニューラル合成。合成歌声での精度: RPA 98.3%、オクターブ誤り 0%、COnP F 値 0.99。
 - 設計は [docs/design.md](docs/design.md)、ニューラル加工のセットアップは [docs/neural-setup.md](docs/neural-setup.md)。
 - 要件定義書との差分: F0 推定は FCPE ではなく YIN ベースの pYIN 風（モデル不要。合成歌声で目標精度を満たす）。FCPE（ONNX）は実音声での評価結果を見て判断する。
 - 未評価: 実音声（本人の歌声・ボカロ）での精度。`koenote_analyze` と `tools/eval`（mir_eval）で評価できる（評価データが必要）。
-- 次のステップ: Sonar でのフェーズ2・MIX 向けの確認、実音声での精度評価（評価データはユーザーが用意する）、最初のリリース（タグの push）、フェーズ3（F-19〜F-21、F-30・F-31、macOS、他 DAW の検証）。
+- 次のステップ: 実音声での精度評価（評価データはユーザーが用意する）、最初のリリース（タグの push）、フェーズ3（F-19〜F-21、F-30・F-31、macOS、他 DAW の検証）。
 
 ## 技術スタック
 

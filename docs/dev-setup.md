@@ -204,6 +204,7 @@ python tools/eval/evaluate.py --ref-notes out/vocal_ref_notes.csv --est-notes ou
    - `KoeNote-x.y.z-windows-x64-setup.exe`（Inno Setup。`installer/KoeNote.iss`）
 4. 下書きの内容（リリースノート、添付ファイル）を確認して、GitHub の画面で公開します。
 
+- タグを付ける前の試運転は、`gh workflow run release.yml`（または GitHub の Actions 画面の「Run workflow」）で行います。同じ手順で zip とインストーラーを作り、Releases は作らずに Actions の成果物（`KoeNote-x.y.z-windows-x64`）として置きます。
 - AGPLv3 のため、配布物に対応するソースが必要です。GitHub Releases はタグのソース（zip / tar.gz）を自動で添付するため、それで満たします。
 - インストーラーの定義は、通常の CI（`ci.yml`）でも毎回ビルドして確認しています（成果物 `KoeNote-installer-windows-x64`）。
 - ローカルでインストーラーを作る場合は Inno Setup 6 を入れて、`iscc /DAppVersion=x.y.z /DSourceRoot=<ルート> installer\KoeNote.iss` を実行します。
