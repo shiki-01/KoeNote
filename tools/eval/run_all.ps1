@@ -8,8 +8,10 @@ param(
     [string]$DataDir = "tools/eval/data",
     [string]$OutDir = "tools/eval/out",
     [string]$Analyzer = "build/tools/analyze/koenote_analyze_artefacts/Release/koenote_analyze.exe",
-    [string]$Python = "python"
+    [string]$Python = "python",
+    [string]$EvalArgs = ""   # evaluate.py へ渡す追加の引数（空白区切り。例: -EvalArgs "--merge-ref-notes 0.02"）
 )
+$extraArgs = @($EvalArgs.Split(" ", [System.StringSplitOptions]::RemoveEmptyEntries))
 
 $ErrorActionPreference = "Stop"
 
@@ -32,9 +34,15 @@ foreach ($wav in $pairs) {
     if ($LASTEXITCODE -ne 0) { Write-Warning "解析に失敗しました: $name"; continue }
 
     $refNotes = Join-Path $OutDir "${name}_ref_notes.csv"
-    & $Analyzer midi $mid $refNotes
+    # <名前>.track があれば、その番号のトラック（MTrk の順番、0 始まり）だけを正解にする（複数パートの MIDI 向け）
+    $trackFile = [System.IO.Path]::ChangeExtension($wav.FullName, ".track")
+    if (Test-Path $trackFile) {
+        & $Analyzer midi $mid $refNotes --track (Get-Content $trackFile -TotalCount 1).Trim()
+    } else {
+        & $Analyzer midi $mid $refNotes
+    }
     if ($LASTEXITCODE -ne 0) { Write-Warning "MIDI の変換に失敗しました: $name"; continue }
 
-    & $Python tools/eval/evaluate.py --ref-notes $refNotes --est-notes (Join-Path $OutDir "${name}_notes.csv")
+    & $Python tools/eval/evaluate.py --ref-notes $refNotes --est-notes (Join-Path $OutDir "${name}_notes.csv") @extraArgs
     if ($LASTEXITCODE -ne 0) { Write-Warning "評価に失敗しました: $name" }
 }

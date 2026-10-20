@@ -15,6 +15,7 @@ struct MidiNote
     double endSec;   // 終了時刻（秒）
     int pitch;       // 0..127
     int velocity;    // 1..127
+    int track = 0;   // 読み取り元のトラック（MTrk の出現順、0 始まり）。書き出しでは使わない
 };
 
 // テンポ変更。sec 以降のテンポを bpm とする。

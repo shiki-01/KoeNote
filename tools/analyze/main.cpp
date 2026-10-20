@@ -65,7 +65,8 @@ int analyseAudio(const juce::File& input, const juce::File& outDir)
     return 0;
 }
 
-int midiToCsv(const juce::File& input, const juce::File& output)
+// track が 0 以上なら、そのトラック（MTrk の出現順、0 始まり）のノートだけを書き出す
+int midiToCsv(const juce::File& input, const juce::File& output, int track)
 {
     juce::MemoryBlock data;
     if (! input.loadFileAsData(data))
@@ -82,12 +83,18 @@ int midiToCsv(const juce::File& input, const juce::File& output)
     }
 
     juce::String text;
+    int written = 0;
     for (const auto& n : sequence->notes)
+    {
+        if (track >= 0 && n.track != track)
+            continue;
+        ++written;
         text << juce::String(n.startSec, 4) << "," << juce::String(n.endSec, 4) << "," << juce::String(midiToHz(n.pitch), 3) << "\n";
+    }
 
     output.getParentDirectory().createDirectory();
     output.replaceWithText(text);
-    std::cout << "wrote " << sequence->notes.size() << " notes to " << output.getFullPathName() << "\n";
+    std::cout << "wrote " << written << " notes to " << output.getFullPathName() << "\n";
     return 0;
 }
 } // namespace
@@ -97,9 +104,23 @@ int main(int argc, char** argv)
     if (argc == 4 && juce::String(argv[1]) == "analyze")
         return analyseAudio(juce::File::getCurrentWorkingDirectory().getChildFile(argv[2]), juce::File::getCurrentWorkingDirectory().getChildFile(argv[3]));
 
-    if (argc == 4 && juce::String(argv[1]) == "midi")
-        return midiToCsv(juce::File::getCurrentWorkingDirectory().getChildFile(argv[2]), juce::File::getCurrentWorkingDirectory().getChildFile(argv[3]));
+    if ((argc == 4 || argc == 6) && juce::String(argv[1]) == "midi")
+    {
+        int track = -1;
+        if (argc == 6)
+        {
+            const juce::String value(argv[5]);
+            if (juce::String(argv[4]) != "--track" || value.isEmpty() || ! value.containsOnly("0123456789"))
+            {
+                std::cerr << "usage: koenote_analyze midi <file.mid> <out.csv> [--track <n>]\n";
+                return 2;
+            }
+            track = value.getIntValue();
+        }
+        return midiToCsv(juce::File::getCurrentWorkingDirectory().getChildFile(argv[2]), juce::File::getCurrentWorkingDirectory().getChildFile(argv[3]), track);
+    }
 
-    std::cerr << "usage:\n  koenote_analyze analyze <audio> <out_dir>\n  koenote_analyze midi <file.mid> <out.csv>\n";
+    std::cerr << "usage:\n  koenote_analyze analyze <audio> <out_dir>\n"
+                 "  koenote_analyze midi <file.mid> <out.csv> [--track <n>]   (n: MTrk の順番、0 始まり。省略時は全トラック)\n";
     return 2;
 }

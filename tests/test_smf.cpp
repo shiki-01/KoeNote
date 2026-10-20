@@ -287,6 +287,9 @@ TEST_CASE("手書きの format 1（2 トラック、running status、velocity 0 
     CHECK(seq->notes[2].pitch == 64);
     CHECK(std::abs(seq->notes[2].startSec - 1.0) <= kRoundTripTolSec);
     CHECK(std::abs(seq->notes[2].endSec - 1.5) <= kRoundTripTolSec);
+    // ノートは 2 番目の MTrk（0 始まりで 1）から読んだもの
+    for (const auto& n : seq->notes)
+        CHECK(n.track == 1);
 
     REQUIRE(seq->tempos.size() == 1);
     CHECK(std::abs(seq->tempos[0].bpm - 60.0) < 0.01);

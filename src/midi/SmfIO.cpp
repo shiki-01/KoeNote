@@ -425,6 +425,7 @@ struct RawNote
     std::uint64_t endTick;
     int pitch;
     int velocity;
+    int track;
 };
 
 struct RawTempo
@@ -441,7 +442,7 @@ struct OpenNote
 
 // 1 トラックを読む。note on/off は pitch ごとに FIFO で対応付け、対応する off がない note on は終端で閉じる。
 // チャンネルは区別しない（ドラムチャンネルも同様）。
-bool parseTrack(ByteCursor track, std::vector<RawNote>& notes, std::vector<RawTempo>& tempos)
+bool parseTrack(ByteCursor track, int trackIndex, std::vector<RawNote>& notes, std::vector<RawTempo>& tempos)
 {
     std::uint64_t tick = 0;
     std::uint64_t lastTick = 0;
@@ -529,7 +530,7 @@ bool parseTrack(ByteCursor track, std::vector<RawNote>& notes, std::vector<RawTe
             auto& queue = open[d1];
             if (! queue.empty())
             {
-                notes.push_back({ queue.front().startTick, tick, d1, queue.front().velocity });
+                notes.push_back({ queue.front().startTick, tick, d1, queue.front().velocity, trackIndex });
                 queue.pop_front();
             }
         }
@@ -538,7 +539,7 @@ bool parseTrack(ByteCursor track, std::vector<RawNote>& notes, std::vector<RawTe
     // 対応する note off がないものは、トラックの終端で閉じる
     for (int pitch = 0; pitch < 128; ++pitch)
         for (const auto& n : open[static_cast<std::size_t>(pitch)])
-            notes.push_back({ n.startTick, lastTick, pitch, n.velocity });
+            notes.push_back({ n.startTick, lastTick, pitch, n.velocity, trackIndex });
 
     return true;
 }
@@ -588,6 +589,7 @@ std::optional<MidiSequence> readSmf(const std::uint8_t* data, std::size_t size)
 
     std::vector<RawNote> rawNotes;
     std::vector<RawTempo> rawTempos;
+    int mtrkIndex = 0;
     for (std::uint16_t i = 0; i < trackCount; ++i)
     {
         std::uint32_t id = 0;
@@ -597,7 +599,7 @@ std::optional<MidiSequence> readSmf(const std::uint8_t* data, std::size_t size)
         ByteCursor chunk(data, 0, 0);
         if (! s.take(length, chunk))
             return std::nullopt; // 長さが残りバイト数を超える
-        if (id == kMTrk && ! parseTrack(chunk, rawNotes, rawTempos))
+        if (id == kMTrk && ! parseTrack(chunk, mtrkIndex++, rawNotes, rawTempos))
             return std::nullopt;
         // MTrk 以外のチャンクは読み飛ばす
     }
@@ -624,7 +626,7 @@ std::optional<MidiSequence> readSmf(const std::uint8_t* data, std::size_t size)
     {
         const double start = tickToSec(map, tpq, n.startTick);
         const double end = std::max(tickToSec(map, tpq, n.endTick), start);
-        result.notes.push_back({ start, end, n.pitch, n.velocity });
+        result.notes.push_back({ start, end, n.pitch, n.velocity, n.track });
     }
     std::stable_sort(result.notes.begin(), result.notes.end(), [](const MidiNote& a, const MidiNote& b) {
         if (a.startSec != b.startSec)

@@ -31,5 +31,7 @@ python evaluate.py --ref-notes data/ref_notes.csv --est-notes out/est_notes.csv
 powershell -ExecutionPolicy Bypass -File tools/eval/run_all.ps1
 ```
 
+- MIDI に複数のパート（トラック）がある場合は、`<名前>.track` にトラックの番号（MTrk の順番、0 始まり。先頭がテンポだけのトラックなら最初のパートは 1）を 1 行で書きます。`koenote_analyze midi <file.mid> <out.csv> --track <n>` と同じです。
+- `-EvalArgs "--merge-ref-notes 0.02"` のように、`evaluate.py` へ追加の引数を渡せます。
 - `-DataDir` で別のフォルダ、`-Python py` で Python の起動コマンドを指定できます。結果の CSV は `tools/eval/out/` に出力されます。
 - 評価用データはリポジトリに含めないため、CI では実行しません（合成歌声での評価は単体テスト `test_accuracy.cpp` が CI で行います）。
