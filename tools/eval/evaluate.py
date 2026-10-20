@@ -68,11 +68,38 @@ def evaluate_pitch(ref_path: str, est_path: str) -> dict:
     }
 
 
-def evaluate_notes(ref_path: str, est_path: str) -> dict:
+def merge_split_notes(notes: np.ndarray, max_gap: float) -> np.ndarray:
+    """同じ音高（±10 セント）で隙間が max_gap 秒以下の連続したノートを 1 つにまとめる。
+
+    歌声合成用の MIDI は子音と母音で別のノートに分けてあることがあり、そのままでは
+    歌い手の 1 音が複数の正解ノートになるため。
+    """
+    if len(notes) == 0:
+        return notes
+    notes = notes[np.argsort(notes[:, 0])]
+    merged = [notes[0].copy()]
+    for note in notes[1:]:
+        last = merged[-1]
+        same_pitch = abs(1200.0 * np.log2(note[2] / last[2])) <= 10.0
+        if same_pitch and note[0] - last[1] <= max_gap:
+            last[1] = max(last[1], note[1])
+        else:
+            merged.append(note.copy())
+    return np.array(merged)
+
+
+def evaluate_notes(ref_path: str, est_path: str, merge_gap: float | None = None, ref_end: float | None = None) -> dict:
     import mir_eval
 
     ref = load_csv(ref_path, 3)
     est = load_csv(est_path, 3)
+
+    # 音声が途中までしかない場合は、その範囲に始まる正解ノートだけを使う
+    if ref_end is not None:
+        ref = ref[ref[:, 0] < ref_end]
+    ref_count = len(ref)
+    if merge_gap is not None:
+        ref = merge_split_notes(ref, merge_gap)
 
     ref_intervals, ref_pitches = ref[:, :2], ref[:, 2]
     est_intervals, est_pitches = est[:, :2], est[:, 2]
@@ -89,6 +116,9 @@ def evaluate_notes(ref_path: str, est_path: str) -> dict:
     )
 
     return {
+        "ref_notes": int(ref_count),
+        "ref_notes_used": int(len(ref)),
+        "est_notes": int(len(est)),
         "conp_precision": float(precision),
         "conp_recall": float(recall),
         "conp_f": float(f_measure),
@@ -102,6 +132,9 @@ def main() -> int:
     parser.add_argument("--est-pitch")
     parser.add_argument("--ref-notes")
     parser.add_argument("--est-notes")
+    parser.add_argument("--merge-ref-notes", type=float, metavar="GAP_SEC",
+                        help="同じ音高で隙間が GAP_SEC 秒以下の正解ノートをまとめる（子音・母音で分けた歌声合成用の MIDI 向け）")
+    parser.add_argument("--ref-end", type=float, metavar="SEC", help="この時刻より前に始まる正解ノートだけを評価する（途中までの録音向け）")
     parser.add_argument("--fail-under-target", action="store_true", help="目標値を満たさない場合に終了コード 1 を返す（CI 用）")
     args = parser.parse_args()
 
@@ -110,7 +143,7 @@ def main() -> int:
     if args.ref_pitch and args.est_pitch:
         result["pitch"] = evaluate_pitch(args.ref_pitch, args.est_pitch)
     if args.ref_notes and args.est_notes:
-        result["notes"] = evaluate_notes(args.ref_notes, args.est_notes)
+        result["notes"] = evaluate_notes(args.ref_notes, args.est_notes, args.merge_ref_notes, args.ref_end)
 
     if not result:
         parser.error("--ref-pitch/--est-pitch または --ref-notes/--est-notes を指定してください")
